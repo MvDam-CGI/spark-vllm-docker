@@ -464,6 +464,7 @@ h2 {
 }
 
 .runtime-card-compact .card-actions {
+  align-self: start;
   justify-content: flex-end;
 }
 
@@ -474,6 +475,11 @@ h2 {
 
 .runtime-card-compact details {
   grid-column: 1;
+}
+
+.runtime-card-compact details[open] {
+  grid-column: 1 / -1;
+  grid-row: 5;
 }
 
 .runtime-card-compact .card-actions {
