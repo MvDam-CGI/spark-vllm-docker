@@ -120,7 +120,7 @@ function renderAll() {
 }
 
 function renderOverview() {
-  const active = state.runtimes.filter((runtime) => ["Starting", "Running", "Ready"].includes(runtime.status));
+  const active = activeRuntimes();
   setText("running-count-badge", active.length ? `${active.length} active` : "Nothing running");
   renderOverviewRuntimes();
   renderCapacityPanel();
@@ -129,18 +129,22 @@ function renderOverview() {
 }
 
 function renderOverviewRuntimes() {
-  const active = state.runtimes.filter((runtime) => ["Starting", "Running", "Ready"].includes(runtime.status));
+  const active = activeRuntimes();
   const nodes = active.length
     ? active.map((runtime) => runtimeCard(runtime, { compact: true }))
     : [emptyState("No models are running", "The Spark is idle. Use Launch to dry run a recipe and then start a model when capacity is available.", "Start a model", "#launch")];
   replaceChildren(byId("overview-runtimes"), nodes);
 }
 
+function activeRuntimes() {
+  return state.runtimes.filter((runtime) => ["Starting", "Running", "Ready"].includes(runtime.status));
+}
+
 function renderCapacityPanel() {
   const gpu = state.gpu?.gpus?.[0];
   const memory = state.system?.memory;
   const disk = state.system?.disk;
-  const activePorts = state.runtimes.map((runtime) => runtime.port).filter(Boolean).join(", ") || "None";
+  const activePorts = activeRuntimes().map((runtime) => runtime.port).filter(Boolean).join(", ") || "None";
   const ready = state.runtimes.filter((runtime) => runtime.status === "Ready").length;
   const gpuPercent = typeof gpu?.memoryPercent === "number" ? gpu.memoryPercent : null;
   const rows = [
