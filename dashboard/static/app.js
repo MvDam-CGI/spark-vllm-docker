@@ -266,6 +266,7 @@ function runtimeCard(runtime, options = {}) {
     statusPill(runtime.status),
     meta("Port", runtime.port),
     meta("Mode", runtime.mode || "Unknown"),
+    runtimeMemoryPanel(runtime),
     details,
     actions,
   );
@@ -440,6 +441,34 @@ function statusPill(status) {
   return el("span", `status status-${text.toLowerCase().replaceAll(" ", "-")}`, text);
 }
 
+
+function runtimeMemoryPanel(runtime) {
+  const panel = el("div", "runtime-memory");
+  panel.append(
+    memoryLine("Spark GPU memory", runtime.gpuMemoryPercent === undefined ? "Not attributed" : `${runtime.gpuMemoryPercent}%`, runtime.gpuMemoryMiB),
+    memoryLine("Model weights", memoryValue(runtime.memoryBreakdown?.modelMiB), runtime.memoryBreakdown?.modelMiB),
+    memoryLine("Context / KV cache", memoryValue(runtime.memoryBreakdown?.contextMiB), runtime.memoryBreakdown?.contextMiB),
+  );
+  return panel;
+}
+
+function memoryLine(label, value, mib) {
+  const row = el("div", "memory-line");
+  row.append(el("span", "", label), el("strong", "", value));
+  if (typeof mib === "number") row.title = formatMiB(mib);
+  return row;
+}
+
+function memoryValue(mib) {
+  return typeof mib === "number" ? formatMiB(mib) : "Not reported";
+}
+
+function formatMiB(mib) {
+  if (typeof mib !== "number") return "Unknown";
+  if (mib >= 1024) return `${(mib / 1024).toFixed(1)} GiB`;
+  return `${Math.round(mib).toLocaleString()} MiB`;
+}
+
 function telemetryLabel(key) {
   return state.failures.has(key) ? "Unavailable" : "Loading";
 }
@@ -453,8 +482,8 @@ function gpuMemoryValue(gpu) {
 
 function gpuMemoryDetail(gpu) {
   if (!gpu) return gpuUnavailableText();
-  if (typeof gpu.memoryPercent === "number") return `${gpu.memoryUsedMiB} MiB used`;
-  if (gpu.memoryUsedMiB) return "GPU process memory from nvidia-smi.";
+  if (typeof gpu.memoryPercent === "number") return `${formatMiB(gpu.memoryUsedMiB)} of ${formatMiB(gpu.memoryTotalMiB)} estimated total.`;
+  if (gpu.memoryUsedMiB) return `${formatMiB(gpu.memoryUsedMiB)} of ${formatMiB(gpu.memoryTotalMiB)} estimated total.`;
   return "GPU memory telemetry is unavailable.";
 }
 

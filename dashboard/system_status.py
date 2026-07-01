@@ -135,7 +135,8 @@ def _gpu_status_from_full_smi() -> dict[str, Any] | None:
     if not result or result.returncode != 0:
         return None
     output = result.stdout
-    process_memory = sum(int(value) for value in re.findall(r"\b(\d+)MiB\b", output))
+    processes = _gpu_processes_from_full_smi(output)
+    process_memory = sum(process["memoryMiB"] for process in processes)
     name_match = re.search(r"\|\s+\d+\s+(.+?)\s{2,}(?:On|Off)\s+\|", output)
     temp_match = re.search(r"\|\s*N/A\s+(\d+)C", output)
     util_match = re.search(r"\|\s+Not Supported\s+\|\s+(\d+)%", output)
@@ -153,16 +154,35 @@ def _gpu_status_from_full_smi() -> dict[str, Any] | None:
                 "temperatureC": int(temp_match.group(1)) if temp_match else None,
                 "powerW": None,
                 "memorySource": "process-table",
+                "processes": processes,
             }
         ],
-        "message": "GPU memory total is not reported by nvidia-smi; process memory is shown.",
+        "message": "GPU memory total was estimated as 128 GiB; process memory is shown.",
     }
 
+
+def _gpu_processes_from_full_smi(output: str) -> list[dict[str, Any]]:
+    processes = []
+    pattern = re.compile(
+        r"\|\s*(?P<gpu>\d+)\s+\S+\s+\S+\s+(?P<pid>\d+)\s+(?P<type>\S+)\s+"
+        r"(?P<name>.*?)\s+(?P<memory>\d+)MiB\s*\|"
+    )
+    for match in pattern.finditer(output):
+        processes.append(
+            {
+                "gpu": int(match.group("gpu")),
+                "pid": int(match.group("pid")),
+                "type": match.group("type"),
+                "name": " ".join(match.group("name").split()),
+                "memoryMiB": int(match.group("memory")),
+            }
+        )
+    return processes
 
 def _configured_gpu_total_mib() -> int:
     raw = os.environ.get("DASHBOARD_GPU_MEMORY_TOTAL_MIB", "").strip()
     if not raw:
-        return 0
+        return 128 * 1024
     try:
         return max(int(raw), 0)
     except ValueError:

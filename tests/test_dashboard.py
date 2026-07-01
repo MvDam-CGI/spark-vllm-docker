@@ -9,9 +9,7 @@ from dashboard.commands import build_launch_plan
 from dashboard.recipes import load_recipe
 from dashboard.system_status import gpu_status, system_status
 
-
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-
 
 def test_load_recipe_normalizes_translategemma():
     recipe = load_recipe(PROJECT_DIR / "recipes" / "translategemma-4b-it.yaml")
@@ -20,7 +18,6 @@ def test_load_recipe_normalizes_translategemma():
     assert recipe.name == "TranslateGemma-4B-IT"
     assert recipe.default_port == 8000
     assert recipe.solo_only is True
-
 
 def test_build_launch_plan_uses_argument_array():
     recipe = load_recipe(PROJECT_DIR / "recipes" / "translategemma-4b-it.yaml")
@@ -45,13 +42,11 @@ def test_build_launch_plan_uses_argument_array():
     assert "8001" in plan.command
     assert plan.container_name == "vllm-translategemma-4b-it-8001"
 
-
 def test_build_launch_plan_rejects_invalid_port():
     recipe = load_recipe(PROJECT_DIR / "recipes" / "translategemma-4b-it.yaml")
 
     with pytest.raises(ValueError, match="Port must be between"):
         build_launch_plan(PROJECT_DIR, recipe, {"mode": "solo", "port": 80})
-
 
 def test_build_launch_plan_rejects_cluster_for_solo_only_recipe():
     recipe = load_recipe(PROJECT_DIR / "recipes" / "translategemma-4b-it.yaml")
@@ -87,8 +82,9 @@ def test_gpu_status_falls_back_to_process_table(monkeypatch):
 
     assert status["available"] is True
     assert status["gpus"][0]["memoryUsedMiB"] == 58586
-    assert status["gpus"][0]["memoryPercent"] is None
+    assert status["gpus"][0]["memoryPercent"] == 44.7
     assert status["gpus"][0]["memorySource"] == "process-table"
+    assert status["gpus"][0]["memoryTotalMiB"] == 131072
 
 def test_current_runtimes_marks_registry_only_runtime_stopped(monkeypatch):
     monkeypatch.setattr(server.REGISTRY, "list", lambda: [{"id": "old", "port": 8001, "status": "Starting"}])
@@ -99,3 +95,18 @@ def test_current_runtimes_marks_registry_only_runtime_stopped(monkeypatch):
     runtimes = server.current_runtimes()
 
     assert runtimes[0]["status"] == "Stopped"
+
+def test_runtime_logs_strips_ansi(monkeypatch):
+    log_path = PROJECT_DIR / "dashboard" / "state" / "test-runtime.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("\x1b[0;36mINFO\x1b[0m startup\n", encoding="utf-8")
+    monkeypatch.setattr(server, "docker_logs", lambda container_name, lines: "\x1b[31mERROR\x1b[0m failed")
+
+    try:
+        logs = server.runtime_logs({"logPath": str(log_path), "containerName": "vllm-test"}, 20)
+    finally:
+        log_path.unlink(missing_ok=True)
+
+    assert "\x1b" not in logs
+    assert "INFO startup" in logs
+    assert "ERROR failed" in logs

@@ -368,6 +368,29 @@ h2 {
   gap: 0.5rem 1rem;
 }
 
+
+.runtime-memory {
+  display: grid;
+  gap: 0.45rem;
+  grid-column: 1 / -1;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(7, 10, 13, 0.34);
+  padding: 0.75rem;
+}
+
+.memory-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  color: var(--muted);
+}
+
+.memory-line strong {
+  color: var(--text);
+  text-align: right;
+}
 .runtime-card-compact details,
 .runtime-card-compact .card-actions {
   grid-column: 1 / -1;
@@ -531,7 +554,13 @@ meter.is-unknown {
   list-style: none;
 }
 
-.event-item,
+.event-item {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(12, 20, 25, 0.78);
+  padding: 0.75rem;
+}
+
 .empty-state {
   min-height: 4.75rem;
   border-style: dashed;

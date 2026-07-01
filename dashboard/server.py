@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
-import signal
 import subprocess
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -208,6 +208,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 def current_runtimes() -> list[dict[str, Any]]:
     containers = {item["containerName"]: item for item in docker_runtimes()}
     runtimes = []
+    gpu = gpu_status()
     for runtime in REGISTRY.list():
         item = dict(runtime)
         container = containers.get(str(item.get("containerName", "")))
@@ -225,7 +226,10 @@ def current_runtimes() -> list[dict[str, Any]]:
             item["status"] = "Dry Run"
         else:
             item["status"] = "Stopped"
+        logs = runtime_logs(item, 80)
+        item["memoryBreakdown"] = parse_memory_breakdown(logs)
         runtimes.append(item)
+    _assign_gpu_memory(runtimes, gpu)
     return runtimes
 
 
@@ -237,27 +241,73 @@ def runtime_logs(runtime: dict[str, Any], lines: int) -> str:
     container_logs = docker_logs(str(runtime.get("containerName", "")), lines)
     if container_logs:
         parts.append("=== Container logs ===\n" + container_logs)
-    return "\n\n".join(parts) if parts else "Logs are not available yet. The runtime may still be preparing its container."
+    merged = "\n\n".join(parts) if parts else "Logs are not available yet. The runtime may still be preparing its container."
+    return strip_ansi(merged)
 
 
 def clean_events(logs: str) -> list[dict[str, str]]:
     events = []
+    seen = set()
     keywords = (
-        ("error", "Needs Attention"),
-        ("failed", "Needs Attention"),
-        ("exception", "Needs Attention"),
+        ("error", "Error"),
+        ("failed", "Error"),
+        ("exception", "Error"),
+        ("traceback", "Error"),
         ("ready", "Ready"),
         ("running", "Running"),
         ("starting", "Starting"),
         ("launching", "Starting"),
     )
-    for line in logs.splitlines()[-200:]:
-        lower = line.lower()
+    for line in strip_ansi(logs).splitlines()[-240:]:
+        cleaned = " ".join(line.split())
+        if not cleaned:
+            continue
+        lower = cleaned.lower()
         match = next((label for word, label in keywords if word in lower), None)
-        if match:
-            events.append({"status": match, "message": line[-240:]})
-    return events[-40:]
+        if not match:
+            continue
+        message = cleaned[-220:]
+        key = (match, message)
+        if key in seen:
+            continue
+        seen.add(key)
+        events.append({"status": match, "message": message})
+    return events[-8:]
 
+
+ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+MEMORY_PATTERNS = (
+    ("modelMiB", re.compile(r"(?:model weights|model memory|weights).*?(\d+(?:\.\d+)?)\s*(GiB|MiB)", re.IGNORECASE)),
+    ("contextMiB", re.compile(r"(?:kv cache|context|cache).*?(\d+(?:\.\d+)?)\s*(GiB|MiB)", re.IGNORECASE)),
+)
+
+
+def strip_ansi(text: str) -> str:
+    return ANSI_RE.sub("", text).replace("\x1b", "")
+
+
+def parse_memory_breakdown(logs: str) -> dict[str, Any]:
+    breakdown: dict[str, Any] = {"modelMiB": None, "contextMiB": None}
+    clean = strip_ansi(logs)
+    for key, pattern in MEMORY_PATTERNS:
+        match = pattern.search(clean)
+        if match:
+            amount = float(match.group(1))
+            unit = match.group(2).lower()
+            breakdown[key] = round(amount * 1024 if unit == "gib" else amount, 1)
+    return breakdown
+
+
+def _assign_gpu_memory(runtimes: list[dict[str, Any]], gpu: dict[str, Any]) -> None:
+    active = [item for item in runtimes if item.get("status") in {"Starting", "Running", "Ready"}]
+    processes = (gpu.get("gpus") or [{}])[0].get("processes") or []
+    vllm_processes = [process for process in processes if "vllm" in str(process.get("name", "")).lower()]
+    total = (gpu.get("gpus") or [{}])[0].get("memoryTotalMiB")
+    if len(active) != 1 or not vllm_processes:
+        return
+    used = sum(int(process.get("memoryMiB", 0) or 0) for process in vllm_processes)
+    active[0]["gpuMemoryMiB"] = used
+    active[0]["gpuMemoryPercent"] = round((used / total) * 100, 1) if total else None
 
 def settings_status() -> dict[str, Any]:
     return {
