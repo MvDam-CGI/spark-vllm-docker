@@ -497,6 +497,24 @@ pre {
 .log-view {
   min-height: 24rem;
 }
+meter.is-unknown {
+  opacity: 0.35;
+}
+
+.launch-status {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin: 1rem 0 0.75rem;
+  background: rgba(225, 25, 55, 0.12);
+  padding: 0.75rem 0.9rem;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.launch-live-logs {
+  min-height: 15rem;
+  max-height: 28rem;
+}
 
 .toolbar {
   display: flex;

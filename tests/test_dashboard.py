@@ -1,10 +1,11 @@
 from pathlib import Path
+from subprocess import CompletedProcess
 
 import pytest
 
 from dashboard.commands import build_launch_plan
 from dashboard.recipes import load_recipe
-from dashboard.system_status import system_status
+from dashboard.system_status import gpu_status, system_status
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -61,3 +62,28 @@ def test_system_status_returns_memory_and_disk():
 
     assert "usedPercent" in status["memory"]
     assert status["disk"]["freeGiB"] >= 0
+
+def test_gpu_status_falls_back_to_process_table(monkeypatch):
+    sample = """
+|   0  NVIDIA GB10                    On  |   0000000F:01:00.0 Off |                  N/A |
+| N/A   44C    P0             11W /  N/A  | Not Supported          |      0%      Default |
+|    0   N/A  N/A           34988      G   /usr/lib/xorg/Xorg                       69MiB |
+|    0   N/A  N/A           35147      G   /usr/bin/gnome-shell                     67MiB |
+|    0   N/A  N/A         3454041      C   VLLM::EngineCore                      58450MiB |
+"""
+
+    def fake_run_command(args, timeout=2.0):
+        if "--query-gpu=name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,power.draw" in args:
+            return CompletedProcess(args, 0, "NVIDIA GB10, Not Supported, Not Supported, Not Supported, 0, 44, 11\n", "")
+        if args == ["nvidia-smi"]:
+            return CompletedProcess(args, 0, sample, "")
+        return CompletedProcess(args, 1, "", "")
+
+    monkeypatch.setattr("dashboard.system_status.run_command", fake_run_command)
+
+    status = gpu_status()
+
+    assert status["available"] is True
+    assert status["gpus"][0]["memoryUsedMiB"] == 58586
+    assert status["gpus"][0]["memoryPercent"] is None
+    assert status["gpus"][0]["memorySource"] == "process-table"

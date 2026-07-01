@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import socket
-import sys
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
@@ -26,29 +27,35 @@ def gpu_status() -> dict[str, Any]:
         "--format=csv,noheader,nounits",
     ]
     result = run_command(args)
-    if not result or result.returncode != 0:
-        return {"available": False, "gpus": [], "message": "GPU status is unavailable."}
+    if result and result.returncode == 0:
+        gpus = []
+        for line in result.stdout.splitlines():
+            parts = [part.strip() for part in line.split(",")]
+            if len(parts) < 7:
+                continue
+            total = _number(parts[1])
+            used = _number(parts[2])
+            if total or used:
+                gpus.append(
+                    {
+                        "name": parts[0],
+                        "memoryTotalMiB": total,
+                        "memoryUsedMiB": used,
+                        "memoryFreeMiB": _number(parts[3]),
+                        "memoryPercent": round((used / total) * 100, 1) if total else None,
+                        "utilizationPercent": _number(parts[4]),
+                        "temperatureC": _number(parts[5]),
+                        "powerW": _number(parts[6]),
+                        "memorySource": "query",
+                    }
+                )
+        if gpus:
+            return {"available": True, "gpus": gpus}
 
-    gpus = []
-    for line in result.stdout.splitlines():
-        parts = [part.strip() for part in line.split(",")]
-        if len(parts) < 7:
-            continue
-        total = _number(parts[1])
-        used = _number(parts[2])
-        gpus.append(
-            {
-                "name": parts[0],
-                "memoryTotalMiB": total,
-                "memoryUsedMiB": used,
-                "memoryFreeMiB": _number(parts[3]),
-                "memoryPercent": round((used / total) * 100, 1) if total else 0,
-                "utilizationPercent": _number(parts[4]),
-                "temperatureC": _number(parts[5]),
-                "powerW": _number(parts[6]),
-            }
-        )
-    return {"available": True, "gpus": gpus}
+    fallback = _gpu_status_from_full_smi()
+    if fallback:
+        return fallback
+    return {"available": False, "gpus": [], "message": "GPU status is unavailable."}
 
 
 def system_status(project_dir: Path) -> dict[str, Any]:
@@ -114,13 +121,52 @@ def health_for_port(port: int) -> dict[str, Any]:
 def docker_logs(container_name: str, lines: int) -> str:
     result = run_command(["docker", "logs", "--tail", str(lines), container_name], timeout=4.0)
     if not result:
-        return "Logs are unavailable."
+        return ""
     return (result.stdout or "") + (result.stderr or "")
 
 
 def stop_container(container_name: str) -> bool:
     result = run_command(["docker", "stop", container_name], timeout=10.0)
     return bool(result and result.returncode == 0)
+
+
+def _gpu_status_from_full_smi() -> dict[str, Any] | None:
+    result = run_command(["nvidia-smi"], timeout=3.0)
+    if not result or result.returncode != 0:
+        return None
+    output = result.stdout
+    process_memory = sum(int(value) for value in re.findall(r"\b(\d+)MiB\b", output))
+    name_match = re.search(r"\|\s+\d+\s+(.+?)\s{2,}(?:On|Off)\s+\|", output)
+    temp_match = re.search(r"\|\s*N/A\s+(\d+)C", output)
+    util_match = re.search(r"\|\s+Not Supported\s+\|\s+(\d+)%", output)
+    total = _configured_gpu_total_mib()
+    return {
+        "available": True,
+        "gpus": [
+            {
+                "name": name_match.group(1).strip() if name_match else "NVIDIA GPU",
+                "memoryTotalMiB": total,
+                "memoryUsedMiB": process_memory,
+                "memoryFreeMiB": max(total - process_memory, 0) if total else None,
+                "memoryPercent": round((process_memory / total) * 100, 1) if total else None,
+                "utilizationPercent": int(util_match.group(1)) if util_match else None,
+                "temperatureC": int(temp_match.group(1)) if temp_match else None,
+                "powerW": None,
+                "memorySource": "process-table",
+            }
+        ],
+        "message": "GPU memory total is not reported by nvidia-smi; process memory is shown.",
+    }
+
+
+def _configured_gpu_total_mib() -> int:
+    raw = os.environ.get("DASHBOARD_GPU_MEMORY_TOTAL_MIB", "").strip()
+    if not raw:
+        return 0
+    try:
+        return max(int(raw), 0)
+    except ValueError:
+        return 0
 
 
 def _memory_status() -> dict[str, Any]:

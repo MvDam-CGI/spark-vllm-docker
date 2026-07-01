@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import secrets
+import signal
 import subprocess
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -30,6 +31,7 @@ from .system_status import (
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATE_DIR = Path(__file__).resolve().parent / "state"
+LOG_DIR = STATE_DIR / "logs"
 REGISTRY = RuntimeRegistry(STATE_DIR / "runtimes.json")
 TOKEN_FILE = STATE_DIR / "control-token.txt"
 
@@ -107,7 +109,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if not runtime:
                 self._json({"error": "Runtime was not found."}, HTTPStatus.NOT_FOUND)
                 return
-            logs = docker_logs(str(runtime.get("containerName", "")), max(20, min(lines, 1000)))
+            logs = runtime_logs(runtime, max(20, min(lines, 1000)))
             self._json({"runtimeId": runtime_id, "logs": logs, "events": clean_events(logs)})
         else:
             self._json({"error": "API route was not found."}, HTTPStatus.NOT_FOUND)
@@ -120,6 +122,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if not recipe:
                 raise ValueError("Unknown recipe.")
             plan = build_launch_plan(PROJECT_DIR, recipe, payload)
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            log_path = LOG_DIR / f"{plan.runtime_id}.log"
             runtime = {
                 "id": plan.runtime_id,
                 "recipeSlug": recipe.slug,
@@ -129,27 +133,42 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 "host": plan.host,
                 "mode": plan.mode,
                 "containerName": plan.container_name,
+                "logPath": str(log_path),
                 "status": "Dry Run" if payload.get("dryRun") else "Starting",
                 "startedAt": utc_now(),
                 "updatedAt": utc_now(),
             }
             if payload.get("dryRun"):
                 result = subprocess.run(plan.command, cwd=PROJECT_DIR, capture_output=True, text=True, timeout=60)
-                runtime["lastOutput"] = result.stdout[-8000:] + result.stderr[-2000:]
+                output = result.stdout[-8000:] + result.stderr[-2000:]
+                log_path.write_text(output, encoding="utf-8")
+                runtime["lastOutput"] = output
                 runtime["status"] = "Ready" if result.returncode == 0 else "Needs Attention"
                 REGISTRY.upsert(runtime)
-                self._json({"launchId": plan.runtime_id, "status": runtime["status"], "command": plan.command, "output": runtime["lastOutput"]})
+                self._json({"launchId": plan.runtime_id, "status": runtime["status"], "command": plan.command, "output": output})
                 return
-            process = subprocess.Popen(
-                plan.command,
-                cwd=PROJECT_DIR,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+            log_file = log_path.open("ab")
+            try:
+                process = subprocess.Popen(
+                    plan.command,
+                    cwd=PROJECT_DIR,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+            finally:
+                log_file.close()
             runtime["processId"] = process.pid
             REGISTRY.upsert(runtime)
-            self._json({"launchId": plan.runtime_id, "status": "Starting", "command": plan.command}, HTTPStatus.ACCEPTED)
+            self._json(
+                {
+                    "launchId": plan.runtime_id,
+                    "status": "Starting",
+                    "command": plan.command,
+                    "logsPath": f"/api/logs/{plan.runtime_id}",
+                },
+                HTTPStatus.ACCEPTED,
+            )
         elif path.startswith("/api/runtimes/") and path.endswith("/stop"):
             runtime_id = path.removeprefix("/api/runtimes/").removesuffix("/stop")
             runtime = REGISTRY.get(runtime_id)
@@ -192,20 +211,43 @@ def current_runtimes() -> list[dict[str, Any]]:
     for runtime in REGISTRY.list():
         item = dict(runtime)
         container = containers.get(str(item.get("containerName", "")))
-        if container:
-            item["status"] = "Running" if "Up" in container.get("status", "") else container.get("status", "Starting")
-            item["container"] = container
-        elif item.get("status") == "Starting":
-            item["status"] = "Needs Attention"
         port = int(item.get("port", 0) or 0)
         item["health"] = health_for_port(port) if port else {"healthy": False}
+        if item["health"].get("healthy"):
+            item["status"] = "Ready"
+        elif container:
+            item["status"] = "Starting" if "Up" in container.get("status", "") else "Needs Attention"
+            item["container"] = container
+        elif _process_running(item.get("processId")):
+            item["status"] = "Starting"
+        elif item.get("status") == "Starting":
+            item["status"] = "Needs Attention"
         runtimes.append(item)
     return runtimes
 
 
+def runtime_logs(runtime: dict[str, Any], lines: int) -> str:
+    parts = []
+    startup = _tail_file(Path(str(runtime.get("logPath", ""))), lines)
+    if startup:
+        parts.append("=== Startup logs ===\n" + startup)
+    container_logs = docker_logs(str(runtime.get("containerName", "")), lines)
+    if container_logs:
+        parts.append("=== Container logs ===\n" + container_logs)
+    return "\n\n".join(parts) if parts else "Logs are not available yet. The runtime may still be preparing its container."
+
+
 def clean_events(logs: str) -> list[dict[str, str]]:
     events = []
-    keywords = (("error", "Needs Attention"), ("failed", "Needs Attention"), ("ready", "Ready"), ("running", "Running"))
+    keywords = (
+        ("error", "Needs Attention"),
+        ("failed", "Needs Attention"),
+        ("exception", "Needs Attention"),
+        ("ready", "Ready"),
+        ("running", "Running"),
+        ("starting", "Starting"),
+        ("launching", "Starting"),
+    )
     for line in logs.splitlines()[-200:]:
         lower = line.lower()
         match = next((label for word, label in keywords if word in lower), None)
@@ -224,6 +266,25 @@ def settings_status() -> dict[str, Any]:
         "authenticationToken": "Configured",
         "healthCheckTimeoutSeconds": 1.5,
     }
+
+
+def _tail_file(path: Path, lines: int) -> str:
+    if not path or not path.exists():
+        return ""
+    try:
+        return "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
+    except OSError:
+        return ""
+
+
+def _process_running(pid: Any) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError):
+        return False
 
 
 def main() -> None:

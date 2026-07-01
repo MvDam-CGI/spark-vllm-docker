@@ -5,6 +5,8 @@ const state = {
   system: null,
   settings: null,
   failures: new Map(),
+  openDetails: new Set(),
+  launchLogTimer: null,
 };
 
 const pages = ["overview", "recipes", "runtime", "launch", "logs", "settings"];
@@ -45,6 +47,7 @@ function showRoute() {
 }
 
 function bindForms() {
+  document.addEventListener("toggle", rememberDetailsState, true);
   document.querySelectorAll("input[name='recipe-filter']").forEach((input) => {
     input.addEventListener("change", renderRecipes);
   });
@@ -59,6 +62,13 @@ function bindForms() {
   byId("refresh-logs").addEventListener("click", refreshLogs);
   byId("copy-logs").addEventListener("click", () => navigator.clipboard.writeText(byId("raw-logs").textContent));
   byId("logs-runtime").addEventListener("change", refreshLogs);
+}
+
+function rememberDetailsState(event) {
+  const details = event.target;
+  if (!(details instanceof HTMLDetailsElement) || !details.dataset.detailKey) return;
+  if (details.open) state.openDetails.add(details.dataset.detailKey);
+  else state.openDetails.delete(details.dataset.detailKey);
 }
 
 async function refreshAll() {
@@ -98,8 +108,8 @@ function renderAll() {
 }
 
 function renderOverview() {
-  const running = state.runtimes.filter((runtime) => runtime.status === "Running").length;
-  setText("running-count-badge", running ? `${running} running` : "Nothing running");
+  const active = state.runtimes.filter((runtime) => ["Starting", "Running", "Ready"].includes(runtime.status));
+  setText("running-count-badge", active.length ? `${active.length} active` : "Nothing running");
   renderOverviewRuntimes();
   renderCapacityPanel();
   replaceChildren(byId("capabilities"), capabilityCards());
@@ -107,8 +117,8 @@ function renderOverview() {
 }
 
 function renderOverviewRuntimes() {
-  const running = state.runtimes.filter((runtime) => runtime.status === "Running");
-  const visible = running.length ? running : state.runtimes;
+  const active = state.runtimes.filter((runtime) => ["Starting", "Running", "Ready"].includes(runtime.status));
+  const visible = active.length ? active : state.runtimes;
   const nodes = visible.length
     ? visible.map((runtime) => runtimeCard(runtime, { compact: true }))
     : [emptyState("No models are running", "The Spark is idle. Use Launch to dry run a recipe and then start a model when capacity is available.", "Start a model", "#launch")];
@@ -120,26 +130,28 @@ function renderCapacityPanel() {
   const memory = state.system?.memory;
   const disk = state.system?.disk;
   const activePorts = state.runtimes.map((runtime) => runtime.port).filter(Boolean).join(", ") || "None";
-  const healthy = state.runtimes.filter((runtime) => runtime.health?.healthy).length;
+  const ready = state.runtimes.filter((runtime) => runtime.status === "Ready").length;
+  const gpuPercent = typeof gpu?.memoryPercent === "number" ? gpu.memoryPercent : null;
   const rows = [
-    meterRow("GPU memory", gpu ? gpu.memoryPercent : null, gpu ? `${gpu.memoryUsedMiB} MiB used` : gpuUnavailableText()),
-    meterRow("System memory", memory ? memory.usedPercent : null, memory ? `${memory.usedMiB} MiB used` : telemetryLabel("system")),
-    meterRow("Disk", disk ? disk.usedPercent : null, disk ? `${disk.freeGiB} GiB free` : telemetryLabel("system")),
+    meterRow("GPU memory", gpuPercent, gpuMemoryValue(gpu), gpuMemoryDetail(gpu)),
+    meterRow("System memory", memory ? memory.usedPercent : null, memory ? `${memory.usedPercent}%` : "Unavailable", memory ? `${memory.usedMiB} MiB used` : telemetryLabel("system")),
+    meterRow("Disk", disk ? disk.usedPercent : null, disk ? `${disk.usedPercent}%` : "Unavailable", disk ? `${disk.freeGiB} GiB free` : telemetryLabel("system")),
     summaryRow("Recipes", state.recipes.length || "Loading"),
     summaryRow("Active ports", activePorts),
-    summaryRow("Healthy endpoints", healthy),
+    summaryRow("Ready endpoints", ready),
   ];
   replaceChildren(byId("capacity-panel"), rows);
 }
 
-function meterRow(label, percent, detail) {
+function meterRow(label, percent, value, detail) {
   const row = el("div", "capacity-row");
   const top = el("div", "capacity-row-top");
-  top.append(el("span", "", label), el("strong", "", percent === null ? "Unavailable" : `${percent}%`));
+  top.append(el("span", "", label), el("strong", "", value));
   const meter = document.createElement("meter");
   meter.min = 0;
   meter.max = 100;
   meter.value = percent === null ? 0 : percent;
+  if (percent === null) meter.classList.add("is-unknown");
   row.append(top, meter, el("p", "muted", detail));
   return row;
 }
@@ -182,7 +194,7 @@ function infoCard(label, value, detail) {
 
 function renderRecipes() {
   const filter = document.querySelector("input[name='recipe-filter']:checked")?.value || "all";
-  const runningSlugs = new Set(state.runtimes.filter((runtime) => runtime.status === "Running").map((runtime) => runtime.recipeSlug));
+  const runningSlugs = new Set(state.runtimes.filter((runtime) => ["Starting", "Running", "Ready"].includes(runtime.status)).map((runtime) => runtime.recipeSlug));
   const recipes = state.recipes.filter((recipe) => {
     if (filter === "solo") return !recipe.clusterOnly;
     if (filter === "cluster") return !recipe.soloOnly;
@@ -204,8 +216,7 @@ function recipeCard(recipe) {
     byId("launch-recipe").value = recipe.slug;
     applyRecipeDefaults();
   });
-  const details = document.createElement("details");
-  details.append(el("summary", "", "Recipe details"));
+  const details = detailsElement(`recipe:${recipe.slug}`, "Recipe details");
   details.append(
     meta("Model ID", recipe.model || "Not specified"),
     meta("Container", recipe.container),
@@ -244,13 +255,12 @@ function runtimeCard(runtime, options = {}) {
     refreshLogs();
   });
   actions.append(logs, stop);
-  const details = document.createElement("details");
-  details.append(el("summary", "", "More runtime details"));
+  const details = detailsElement(`runtime:${runtime.id}`, "More runtime details");
   details.append(
     meta("Runtime name", runtime.id),
     meta("API base URL", `http://127.0.0.1:${runtime.port}/v1`),
     meta("Container name", runtime.containerName || "Unknown"),
-    meta("Last health check", runtime.health?.healthy ? "Ready" : "Needs Attention"),
+    meta("Last health check", runtime.health?.healthy ? "Ready" : "Not ready yet"),
   );
   card.append(
     el("h2", "", runtime.recipeName),
@@ -301,13 +311,45 @@ function updateCommandPreview() {
 
 async function launchRuntime(event) {
   event.preventDefault();
-  setText("launch-output", "Submitting launch request...");
+  setText("launch-status", "Submitting launch request...");
+  setText("launch-output", "");
+  setText("launch-live-logs", "Waiting for startup logs...");
   try {
     const result = await apiPost("/api/runtimes", launchPayload());
-    setText("launch-output", result.output || `${result.status}. Launch ID: ${result.launchId}`);
+    if (launchPayload().dryRun) {
+      setText("launch-status", result.status === "Ready" ? "Dry run completed." : "Dry run needs attention.");
+      setText("launch-live-logs", result.output || "No dry-run output returned.");
+    } else {
+      setText("launch-status", `Starting ${result.launchId}. Watching startup logs...`);
+      watchLaunchLogs(result.launchId);
+    }
     await refreshAll();
   } catch (error) {
+    setText("launch-status", "Launch request failed.");
     setText("launch-output", error.message);
+  }
+}
+
+function watchLaunchLogs(runtimeId) {
+  if (state.launchLogTimer) clearInterval(state.launchLogTimer);
+  refreshLaunchLogs(runtimeId);
+  state.launchLogTimer = setInterval(() => refreshLaunchLogs(runtimeId), 2000);
+}
+
+async function refreshLaunchLogs(runtimeId) {
+  try {
+    const [logsResult, runtimesResult] = await Promise.all([apiGet(`/api/logs/${runtimeId}?lines=180`), apiGet("/api/runtimes")]);
+    setText("launch-live-logs", logsResult.logs || "Startup logs are not available yet.");
+    const runtime = (runtimesResult.runtimes || []).find((item) => item.id === runtimeId);
+    if (runtime) {
+      setText("launch-status", `${runtime.recipeName}: ${runtime.status}`);
+      if (["Ready", "Needs Attention", "Stopped"].includes(runtime.status) && state.launchLogTimer) {
+        clearInterval(state.launchLogTimer);
+        state.launchLogTimer = null;
+      }
+    }
+  } catch (error) {
+    setText("launch-status", "Startup log polling is unavailable.");
   }
 }
 
@@ -403,8 +445,30 @@ function telemetryLabel(key) {
   return state.failures.has(key) ? "Unavailable" : "Loading";
 }
 
+function gpuMemoryValue(gpu) {
+  if (!gpu) return "Unavailable";
+  if (typeof gpu.memoryPercent === "number") return `${gpu.memoryPercent}%`;
+  if (gpu.memoryUsedMiB) return `${Math.round(gpu.memoryUsedMiB).toLocaleString()} MiB`;
+  return "Unavailable";
+}
+
+function gpuMemoryDetail(gpu) {
+  if (!gpu) return gpuUnavailableText();
+  if (typeof gpu.memoryPercent === "number") return `${gpu.memoryUsedMiB} MiB used`;
+  if (gpu.memoryUsedMiB) return "Used by GPU processes; total memory is not reported by nvidia-smi.";
+  return "GPU memory is not reported by nvidia-smi.";
+}
+
 function gpuUnavailableText() {
   return state.failures.has("gpu") ? "nvidia-smi is unavailable" : "Waiting for nvidia-smi";
+}
+
+function detailsElement(key, summaryText) {
+  const details = document.createElement("details");
+  details.dataset.detailKey = key;
+  details.open = state.openDetails.has(key);
+  details.append(el("summary", "", summaryText));
+  return details;
 }
 
 function emptyState(title, detail, actionLabel = "", href = "") {
