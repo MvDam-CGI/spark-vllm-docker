@@ -86,15 +86,17 @@ def test_gpu_status_falls_back_to_process_table(monkeypatch):
     assert status["gpus"][0]["memorySource"] == "process-table"
     assert status["gpus"][0]["memoryTotalMiB"] == 131072
 
-def test_current_runtimes_marks_registry_only_runtime_stopped(monkeypatch):
+def test_current_runtimes_marks_registry_only_runtime_exited(monkeypatch):
     monkeypatch.setattr(server.REGISTRY, "list", lambda: [{"id": "old", "port": 8001, "status": "Starting"}])
     monkeypatch.setattr(server, "docker_runtimes", lambda: [])
     monkeypatch.setattr(server, "_process_running", lambda pid: False)
     monkeypatch.setattr(server, "health_for_port", lambda port: {"healthy": False})
+    monkeypatch.setattr(server, "gpu_status", lambda: {"gpus": []})
+    monkeypatch.setattr(server, "docker_logs", lambda container_name, lines: "")
 
     runtimes = server.current_runtimes()
 
-    assert runtimes[0]["status"] == "Stopped"
+    assert runtimes[0]["status"] == "Exited"
 
 def test_runtime_logs_strips_ansi(monkeypatch):
     log_path = PROJECT_DIR / "dashboard" / "state" / "test-runtime.log"
@@ -110,3 +112,71 @@ def test_runtime_logs_strips_ansi(monkeypatch):
     assert "\x1b" not in logs
     assert "INFO startup" in logs
     assert "ERROR failed" in logs
+
+def test_current_runtimes_keeps_manual_stop_reason(monkeypatch):
+    monkeypatch.setattr(server.REGISTRY, "list", lambda: [{"id": "old", "port": 8001, "status": "Manually Stopped", "stopRequestedAt": "now"}])
+    monkeypatch.setattr(server, "docker_runtimes", lambda: [])
+    monkeypatch.setattr(server, "_process_running", lambda pid: False)
+    monkeypatch.setattr(server, "health_for_port", lambda port: {"healthy": False})
+    monkeypatch.setattr(server, "gpu_status", lambda: {"gpus": []})
+    monkeypatch.setattr(server, "docker_logs", lambda container_name, lines: "")
+
+    runtimes = server.current_runtimes()
+
+    assert runtimes[0]["status"] == "Manually Stopped"
+
+def test_current_runtimes_uses_configured_gpu_target_for_multiple_active(monkeypatch):
+    monkeypatch.setattr(
+        server.REGISTRY,
+        "list",
+        lambda: [
+            {"id": "one", "port": 8001, "status": "Starting", "gpuMemoryUtilization": 0.7},
+            {"id": "two", "port": 8002, "status": "Starting", "command": ["run", "--gpu-mem", "0.2"]},
+        ],
+    )
+    monkeypatch.setattr(server, "docker_runtimes", lambda: [])
+    monkeypatch.setattr(server, "_process_running", lambda pid: True)
+    monkeypatch.setattr(server, "health_for_port", lambda port: {"healthy": False})
+    monkeypatch.setattr(
+        server,
+        "gpu_status",
+        lambda: {"gpus": [{"memoryTotalMiB": 131072, "processes": [{"name": "VLLM::EngineCore", "memoryMiB": 60000}]}]},
+    )
+    monkeypatch.setattr(server, "docker_logs", lambda container_name, lines: "")
+
+    runtimes = server.current_runtimes()
+
+    assert [runtime["gpuMemoryPercent"] for runtime in runtimes] == [70, 20]
+    assert all(runtime["gpuMemorySource"] == "configured target" for runtime in runtimes)
+
+def test_merge_memory_breakdown_keeps_values_when_tail_omits_them():
+    stored = {"modelMiB": 7680, "contextMiB": 28928}
+    parsed = {"modelMiB": None, "contextMiB": None}
+
+    assert server.merge_memory_breakdown(stored, parsed) == stored
+
+def test_current_runtimes_persists_new_memory_breakdown(monkeypatch):
+    updates = []
+    monkeypatch.setattr(
+        server.REGISTRY,
+        "list",
+        lambda: [{"id": "one", "port": 8001, "status": "Starting", "memoryBreakdown": {"modelMiB": 7680, "contextMiB": None}}],
+    )
+    monkeypatch.setattr(server.REGISTRY, "update_fields", lambda runtime_id, payload: updates.append((runtime_id, payload)))
+    monkeypatch.setattr(server, "docker_runtimes", lambda: [])
+    monkeypatch.setattr(server, "_process_running", lambda pid: True)
+    monkeypatch.setattr(server, "health_for_port", lambda port: {"healthy": False})
+    monkeypatch.setattr(server, "gpu_status", lambda: {"gpus": []})
+    monkeypatch.setattr(server, "docker_logs", lambda container_name, lines: "GPU KV cache size: 28.25GiB")
+
+    runtimes = server.current_runtimes()
+
+    assert runtimes[0]["memoryBreakdown"] == {"modelMiB": 7680, "contextMiB": 28928}
+    assert updates == [("one", {"memoryBreakdown": {"modelMiB": 7680, "contextMiB": 28928}})]
+def test_parse_memory_breakdown_handles_vllm_gb_lines():
+    logs = "Loading model weights took 7.5 GB\nGPU KV cache size: 28.25GiB\n"
+
+    breakdown = server.parse_memory_breakdown(logs)
+
+    assert breakdown["modelMiB"] == 7680
+    assert breakdown["contextMiB"] == 28928

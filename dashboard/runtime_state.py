@@ -34,11 +34,22 @@ class RuntimeRegistry:
     def get(self, runtime_id: str) -> dict[str, Any] | None:
         return next((item for item in self.list() if item.get("id") == runtime_id), None)
 
-    def update_status(self, runtime_id: str, status: str) -> None:
+    def update_status(self, runtime_id: str, status: str, updates: dict[str, Any] | None = None) -> None:
         runtimes = self.list()
         for runtime in runtimes:
             if runtime.get("id") == runtime_id:
                 runtime["status"] = status
+                runtime["updatedAt"] = utc_now()
+                if updates:
+                    runtime.update(updates)
+                break
+        self._write(runtimes)
+
+    def update_fields(self, runtime_id: str, updates: dict[str, Any]) -> None:
+        runtimes = self.list()
+        for runtime in runtimes:
+            if runtime.get("id") == runtime_id:
+                runtime.update(updates)
                 runtime["updatedAt"] = utc_now()
                 break
         self._write(runtimes)

@@ -260,13 +260,14 @@ function runtimeCard(runtime, options = {}) {
     meta("API base URL", `http://127.0.0.1:${runtime.port}/v1`),
     meta("Container name", runtime.containerName || "Unknown"),
     meta("Last health check", runtime.health?.healthy ? "Ready" : "Not ready yet"),
+    runtimeMemoryPanel(runtime),
   );
   card.append(
     el("h2", "", runtime.recipeName),
     statusPill(runtime.status),
     meta("Port", runtime.port),
     meta("Mode", runtime.mode || "Unknown"),
-    runtimeMemoryPanel(runtime),
+    runtimeGpuSummary(runtime),
     details,
     actions,
   );
@@ -343,7 +344,7 @@ async function refreshLaunchLogs(runtimeId) {
     const runtime = (runtimesResult.runtimes || []).find((item) => item.id === runtimeId);
     if (runtime) {
       setText("launch-status", `${runtime.recipeName}: ${runtime.status}`);
-      if (["Ready", "Needs Attention", "Stopped"].includes(runtime.status) && state.launchLogTimer) {
+      if (["Ready", "Needs Attention", "Manually Stopped", "Exited", "Stopped"].includes(runtime.status) && state.launchLogTimer) {
         clearInterval(state.launchLogTimer);
         state.launchLogTimer = null;
       }
@@ -441,15 +442,44 @@ function statusPill(status) {
   return el("span", `status status-${text.toLowerCase().replaceAll(" ", "-")}`, text);
 }
 
+function runtimeGpuSummary(runtime) {
+  const panel = el("div", "runtime-gpu-summary");
+  const percent = runtimeGpuPercent(runtime);
+  panel.append(
+    el("strong", "", percent === null ? "GPU target unknown" : `${percent}% GPU memory`),
+    el("p", "muted", runtimeGpuSource(runtime)),
+  );
+  return panel;
+}
+
+function runtimeGpuPercent(runtime) {
+  if (typeof runtime.gpuMemoryPercent === "number") return runtime.gpuMemoryPercent;
+  if (typeof runtime.gpuMemoryTargetPercent === "number") return runtime.gpuMemoryTargetPercent;
+  return null;
+}
+
+function runtimeGpuSource(runtime) {
+  if (runtime.gpuMemorySource === "observed process memory") {
+    return `${formatMiB(runtime.gpuMemoryObservedMiB)} observed by nvidia-smi`;
+  }
+  if (typeof runtime.gpuMemoryTargetPercent === "number") return "Configured launch target";
+  return "No GPU target was recorded for this runtime";
+}
 
 function runtimeMemoryPanel(runtime) {
   const panel = el("div", "runtime-memory");
   panel.append(
-    memoryLine("Spark GPU memory", runtime.gpuMemoryPercent === undefined ? "Not attributed" : `${runtime.gpuMemoryPercent}%`, runtime.gpuMemoryMiB),
+    memoryLine("GPU target", typeof runtime.gpuMemoryTargetPercent === "number" ? `${runtime.gpuMemoryTargetPercent}%` : "Not recorded"),
+    memoryLine("Observed GPU memory", observedGpuValue(runtime), runtime.gpuMemoryObservedMiB),
     memoryLine("Model weights", memoryValue(runtime.memoryBreakdown?.modelMiB), runtime.memoryBreakdown?.modelMiB),
     memoryLine("Context / KV cache", memoryValue(runtime.memoryBreakdown?.contextMiB), runtime.memoryBreakdown?.contextMiB),
   );
   return panel;
+}
+
+function observedGpuValue(runtime) {
+  if (typeof runtime.gpuMemoryObservedMiB === "number") return formatMiB(runtime.gpuMemoryObservedMiB);
+  return "Only attributable when a single active vLLM process is visible";
 }
 
 function memoryLine(label, value, mib) {

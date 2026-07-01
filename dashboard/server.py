@@ -132,6 +132,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 "port": plan.port,
                 "host": plan.host,
                 "mode": plan.mode,
+                "gpuMemoryUtilization": payload.get("gpuMemoryUtilization"),
+                "maxModelLen": payload.get("maxModelLen"),
+                "tensorParallel": payload.get("tensorParallel"),
                 "containerName": plan.container_name,
                 "logPath": str(log_path),
                 "status": "Dry Run" if payload.get("dryRun") else "Starting",
@@ -176,7 +179,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._json({"error": "Runtime was not found."}, HTTPStatus.NOT_FOUND)
                 return
             stopped = stop_container(str(runtime.get("containerName", "")))
-            REGISTRY.update_status(runtime_id, "Stopped" if stopped else "Needs Attention")
+            if stopped:
+                REGISTRY.update_status(runtime_id, "Manually Stopped", {"stopRequestedAt": utc_now(), "stopReason": "dashboard"})
+            else:
+                REGISTRY.update_status(runtime_id, "Needs Attention")
             self._json({"runtimeId": runtime_id, "stopped": stopped})
         else:
             self._json({"error": "API route was not found."}, HTTPStatus.NOT_FOUND)
@@ -215,6 +221,8 @@ def current_runtimes() -> list[dict[str, Any]]:
         process_running = _process_running(item.get("processId"))
         port = int(item.get("port", 0) or 0)
         item["health"] = health_for_port(port) if port else {"healthy": False}
+        item["gpuMemoryTargetPercent"] = _gpu_memory_target_percent(item)
+        manual_stop = item.get("status") == "Manually Stopped" or bool(item.get("stopRequestedAt"))
         if item["health"].get("healthy"):
             item["status"] = "Ready"
         elif container:
@@ -224,10 +232,15 @@ def current_runtimes() -> list[dict[str, Any]]:
             item["status"] = "Starting"
         elif item.get("status") == "Dry Run":
             item["status"] = "Dry Run"
+        elif manual_stop:
+            item["status"] = "Manually Stopped"
         else:
-            item["status"] = "Stopped"
+            item["status"] = "Exited"
         logs = runtime_logs(item, 80)
-        item["memoryBreakdown"] = parse_memory_breakdown(logs)
+        parsed_memory = parse_memory_breakdown(logs)
+        item["memoryBreakdown"] = merge_memory_breakdown(item.get("memoryBreakdown"), parsed_memory)
+        if _has_new_memory_values(item.get("memoryBreakdown"), runtime.get("memoryBreakdown")):
+            REGISTRY.update_fields(str(item.get("id")), {"memoryBreakdown": item["memoryBreakdown"]})
         runtimes.append(item)
     _assign_gpu_memory(runtimes, gpu)
     return runtimes
@@ -277,8 +290,8 @@ def clean_events(logs: str) -> list[dict[str, str]]:
 
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 MEMORY_PATTERNS = (
-    ("modelMiB", re.compile(r"(?:model weights|model memory|weights).*?(\d+(?:\.\d+)?)\s*(GiB|MiB)", re.IGNORECASE)),
-    ("contextMiB", re.compile(r"(?:kv cache|context|cache).*?(\d+(?:\.\d+)?)\s*(GiB|MiB)", re.IGNORECASE)),
+    ("modelMiB", re.compile(r"(?:loading model weights|model weights|model memory|weights).*?(\d+(?:\.\d+)?)\s*(GiB|GB|MiB|MB)", re.IGNORECASE)),
+    ("contextMiB", re.compile(r"(?:kv cache|context|cache).*?(\d+(?:\.\d+)?)\s*(GiB|GB|MiB|MB)", re.IGNORECASE)),
 )
 
 
@@ -294,20 +307,70 @@ def parse_memory_breakdown(logs: str) -> dict[str, Any]:
         if match:
             amount = float(match.group(1))
             unit = match.group(2).lower()
-            breakdown[key] = round(amount * 1024 if unit == "gib" else amount, 1)
+            breakdown[key] = round(amount * 1024 if unit.startswith("g") else amount, 1)
     return breakdown
 
+def merge_memory_breakdown(stored: Any, parsed: dict[str, Any]) -> dict[str, Any]:
+    stored_values = stored if isinstance(stored, dict) else {}
+    merged = {"modelMiB": stored_values.get("modelMiB"), "contextMiB": stored_values.get("contextMiB")}
+    for key in merged:
+        if parsed.get(key) is not None:
+            merged[key] = parsed[key]
+    return merged
 
+
+def _has_new_memory_values(current: Any, previous: Any) -> bool:
+    if not isinstance(current, dict):
+        return False
+    previous_values = previous if isinstance(previous, dict) else {}
+    for key, value in current.items():
+        if value is not None and previous_values.get(key) != value:
+            return True
+    return False
 def _assign_gpu_memory(runtimes: list[dict[str, Any]], gpu: dict[str, Any]) -> None:
     active = [item for item in runtimes if item.get("status") in {"Starting", "Running", "Ready"}]
+    for runtime in active:
+        target = runtime.get("gpuMemoryTargetPercent")
+        if target is not None:
+            runtime["gpuMemoryPercent"] = target
+            runtime["gpuMemorySource"] = "configured target"
+
     processes = (gpu.get("gpus") or [{}])[0].get("processes") or []
     vllm_processes = [process for process in processes if "vllm" in str(process.get("name", "")).lower()]
     total = (gpu.get("gpus") or [{}])[0].get("memoryTotalMiB")
     if len(active) != 1 or not vllm_processes:
         return
     used = sum(int(process.get("memoryMiB", 0) or 0) for process in vllm_processes)
-    active[0]["gpuMemoryMiB"] = used
-    active[0]["gpuMemoryPercent"] = round((used / total) * 100, 1) if total else None
+    percent = round((used / total) * 100, 1) if total else None
+    active[0]["gpuMemoryObservedMiB"] = used
+    active[0]["gpuMemoryObservedPercent"] = percent
+    active[0]["gpuMemoryPercent"] = percent
+    active[0]["gpuMemorySource"] = "observed process memory"
+
+
+def _gpu_memory_target_percent(runtime: dict[str, Any]) -> float | None:
+    value = runtime.get("gpuMemoryUtilization")
+    if value is None:
+        value = _command_arg(runtime.get("command"), "--gpu-mem")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number <= 0:
+        return None
+    return round(number * 100 if number <= 1 else number, 1)
+
+
+def _command_arg(command: Any, flag: str) -> str | None:
+    if not isinstance(command, list):
+        return None
+    try:
+        index = command.index(flag)
+    except ValueError:
+        return None
+    if index + 1 >= len(command):
+        return None
+    return str(command[index + 1])
 
 def settings_status() -> dict[str, Any]:
     return {

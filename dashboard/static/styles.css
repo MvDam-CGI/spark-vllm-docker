@@ -326,8 +326,14 @@ h2 {
   background: var(--amber);
 }
 
-.status-needs-attention::before {
+.status-needs-attention::before,
+.status-exited::before {
   background: var(--red);
+}
+
+.status-manually-stopped::before,
+.status-stopped::before {
+  background: var(--muted);
 }
 
 .runtime-stack,
@@ -368,6 +374,23 @@ h2 {
   gap: 0.5rem 1rem;
 }
 
+.runtime-gpu-summary {
+  display: grid;
+  gap: 0.15rem;
+  grid-column: 1 / -1;
+  border-left: 3px solid var(--cgi-red);
+  background: rgba(7, 10, 13, 0.28);
+  padding: 0.65rem 0.8rem;
+}
+
+.runtime-gpu-summary strong {
+  font-size: 1.35rem;
+  line-height: 1.1;
+}
+
+.runtime-gpu-summary p {
+  margin: 0;
+}
 
 .runtime-memory {
   display: grid;
