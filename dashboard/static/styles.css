@@ -414,11 +414,81 @@ h2 {
   color: var(--text);
   text-align: right;
 }
-.runtime-card-compact details,
-.runtime-card-compact .card-actions {
-  grid-column: 1 / -1;
+
+.runtime-card-compact {
+  grid-template-columns: minmax(12rem, 1fr) auto;
+  gap: 0.3rem 0.75rem;
+  padding: 0.75rem 0.85rem;
 }
 
+.runtime-card-compact h2 {
+  align-self: center;
+  margin-bottom: 0;
+  font-size: 1.02rem;
+}
+
+.runtime-card-compact .status {
+  align-self: center;
+  margin-bottom: 0;
+  padding: 0.12rem 0.55rem;
+}
+
+.runtime-card-compact .recipe-meta {
+  margin-bottom: 0;
+  font-size: 0.92rem;
+}
+
+.runtime-card-compact .runtime-gpu-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.1rem;
+  padding: 0.45rem 0.65rem;
+}
+
+.runtime-card-compact .runtime-gpu-summary strong {
+  font-size: 1.05rem;
+}
+
+.runtime-card-compact .runtime-gpu-summary p {
+  font-size: 0.9rem;
+}
+
+.runtime-card-compact details {
+  font-size: 0.92rem;
+}
+
+.runtime-card-compact details:not([open]) {
+  align-self: center;
+}
+
+.runtime-card-compact .card-actions {
+  justify-content: flex-end;
+}
+
+.runtime-card-compact .card-actions button {
+  min-height: 2rem;
+  padding: 0.32rem 0.75rem;
+}
+
+.runtime-card-compact details {
+  grid-column: 1;
+}
+
+.runtime-card-compact .card-actions {
+  grid-column: 2;
+  grid-row: 4;
+}
+
+.control-panel-large .panel-heading {
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.6rem;
+}
+
+.control-panel-large .runtime-stack {
+  gap: 0.65rem;
+}
 .capacity-panel {
   display: grid;
   gap: 1rem;
