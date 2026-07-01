@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#070a0d">
+    <title>Overview</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/cgi-logo.png" type="image/png">
+    <link rel="stylesheet" href="/styles.css">
+    <script type="module" src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="app-header">
+      <a class="brand" href="#overview" aria-label="Overview">
+        <img src="/cgi-logo.png" alt="CGI" width="58" height="32">
+        <span>DGX Spark Control Room</span>
+      </a>
+      <nav aria-label="Main navigation" class="main-nav">
+        <a href="#overview" data-page-link="overview">Overview</a>
+        <a href="#launch" data-page-link="launch">Launch</a>
+        <a href="#recipes" data-page-link="recipes">Recipes</a>
+        <a href="#logs" data-page-link="logs">Logs</a>
+        <a href="#settings" data-page-link="settings">Settings</a>
+      </nav>
+    </header>
+
+    <main id="main-content" tabindex="-1">
+      <section class="page is-active" data-page="overview" aria-labelledby="page-title">
+        <div class="page-heading manager-heading">
+          <p class="eyebrow">Manager view</p>
+          <h1 id="page-title">DGX Spark overview</h1>
+          <p class="page-intro">See what is running, how much capacity is used, and whether the Spark is ready for the next demo.</p>
+          <div class="hero-actions" aria-label="Primary actions">
+            <a class="primary-link" href="#launch">Start a model</a>
+            <a class="secondary-link" href="#recipes">Browse recipes</a>
+          </div>
+        </div>
+
+        <div class="overview-layout">
+          <section class="control-panel control-panel-large" aria-labelledby="running-title">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Now running</p>
+                <h2 id="running-title">Models on this Spark</h2>
+              </div>
+              <span id="running-count-badge" class="status-badge">Checking</span>
+            </div>
+            <div id="overview-runtimes" class="runtime-stack"></div>
+          </section>
+
+          <section class="control-panel" aria-labelledby="capacity-title">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Capacity</p>
+                <h2 id="capacity-title">Memory and ports</h2>
+              </div>
+            </div>
+            <div id="capacity-panel" class="capacity-panel"></div>
+          </section>
+        </div>
+
+        <details class="details-panel">
+          <summary>Show recipe and event details</summary>
+          <div class="details-grid">
+            <section aria-labelledby="demo-title" class="section-band">
+              <h2 id="demo-title">Demo-ready capabilities</h2>
+              <div class="capability-grid" id="capabilities"></div>
+            </section>
+            <section aria-labelledby="events-title" class="section-band">
+              <h2 id="events-title">Recent launch events</h2>
+              <ol class="event-list" id="recent-events"></ol>
+            </section>
+          </div>
+        </details>
+      </section>
+
+      <section class="page" data-page="launch" aria-labelledby="launch-title">
+        <div class="page-heading compact-heading">
+          <p class="eyebrow">Operator workflow</p>
+          <h1 id="launch-title">Launch</h1>
+          <p class="page-intro">Select a known recipe, keep the generated command visible, and use dry run before starting the model.</p>
+        </div>
+        <form id="launch-form" class="launch-layout">
+          <section class="launch-form" aria-labelledby="launch-settings-title">
+            <h2 id="launch-settings-title">Start a model from a recipe</h2>
+            <label>Recipe<select id="launch-recipe" name="recipeSlug" required></select></label>
+            <fieldset>
+              <legend>Mode</legend>
+              <label><input type="radio" name="mode" value="solo" checked> Solo</label>
+              <label><input type="radio" name="mode" value="cluster"> Cluster</label>
+            </fieldset>
+            <label>Port<input id="launch-port" name="port" type="number" min="1024" max="65535" required></label>
+            <label>Host<input id="launch-host" name="host" autocomplete="off" required></label>
+            <label>GPU memory utilization <output id="gpu-memory-output"></output>
+              <input id="launch-gpu-memory" name="gpuMemoryUtilization" type="range" min="0.1" max="0.98" step="0.01">
+            </label>
+            <details>
+              <summary>Advanced launch settings</summary>
+              <label>Max model length<input id="launch-max-len" name="maxModelLen" type="number" min="1" required></label>
+              <label>Tensor parallel<input id="launch-tp" name="tensorParallel" type="number" min="1" max="16" value="1"></label>
+              <label class="switch"><input id="launch-setup" name="setup" type="checkbox"> Setup before launch</label>
+              <p id="selected-recipe-summary" class="muted"></p>
+            </details>
+            <label class="switch"><input id="launch-dry-run" name="dryRun" type="checkbox" checked> Dry run first</label>
+            <button class="primary-button" type="submit" data-control-action="launch">Launch</button>
+          </section>
+          <section class="command-panel" aria-labelledby="command-title">
+            <h2 id="command-title">Command preview</h2>
+            <pre id="command-preview" tabindex="0"></pre>
+            <output id="launch-output" aria-live="polite"></output>
+          </section>
+        </form>
+      </section>
+
+      <section class="page" data-page="recipes" aria-labelledby="recipes-title">
+        <div class="page-heading compact-heading">
+          <p class="eyebrow">Recipe library</p>
+          <h1 id="recipes-title">Recipes</h1>
+          <p class="page-intro">Recipes define the known model runtimes that can be safely launched from the dashboard.</p>
+        </div>
+        <fieldset class="segmented">
+          <legend>Filter recipes</legend>
+          <label><input type="radio" name="recipe-filter" value="all" checked> All</label>
+          <label><input type="radio" name="recipe-filter" value="solo"> Solo</label>
+          <label><input type="radio" name="recipe-filter" value="cluster"> Cluster</label>
+          <label><input type="radio" name="recipe-filter" value="running"> Running</label>
+          <label><input type="radio" name="recipe-filter" value="ready"> Ready to Launch</label>
+        </fieldset>
+        <div class="recipe-grid" id="recipe-list"></div>
+      </section>
+
+      <section class="page" data-page="runtime" aria-labelledby="runtime-title">
+        <div class="page-heading compact-heading">
+          <p class="eyebrow">Runtime details</p>
+          <h1 id="runtime-title">Runtime</h1>
+        </div>
+        <div class="runtime-list" id="runtime-list"></div>
+      </section>
+
+      <section class="page" data-page="logs" aria-labelledby="logs-title">
+        <div class="page-heading compact-heading">
+          <p class="eyebrow">Runtime evidence</p>
+          <h1 id="logs-title">Logs</h1>
+          <p class="page-intro">Inspect clean events and raw logs for dashboard-launched runtimes.</p>
+        </div>
+        <div class="toolbar">
+          <label>Runtime<select id="logs-runtime"></select></label>
+          <button id="refresh-logs" type="button">Refresh</button>
+          <button id="copy-logs" type="button">Copy logs</button>
+        </div>
+        <div id="critical-log-events" class="event-list" aria-live="polite"></div>
+        <pre id="raw-logs" class="log-view" tabindex="0"></pre>
+      </section>
+
+      <section class="page" data-page="settings" aria-labelledby="settings-title">
+        <div class="page-heading compact-heading">
+          <p class="eyebrow">Dashboard behavior</p>
+          <h1 id="settings-title">Settings</h1>
+        </div>
+        <dl class="settings-list" id="settings-list"></dl>
+        <form id="token-form" class="token-form">
+          <label>Control token<input id="control-token" type="password" autocomplete="current-password"></label>
+          <button type="submit">Save token</button>
+          <p id="token-status" class="muted" aria-live="polite">Launch and stop actions require the local control token.</p>
+        </form>
+      </section>
+    </main>
+
+    <footer>
+      <span id="connection-state" aria-live="polite">Connecting</span>
+    </footer>
+
+    <dialog id="confirm-dialog">
+      <form method="dialog">
+        <h2>Confirm stop</h2>
+        <p>This stops the selected dashboard-launched runtime.</p>
+        <menu>
+          <button value="cancel">Cancel</button>
+          <button value="confirm" class="danger-button">Stop</button>
+        </menu>
+      </form>
+    </dialog>
+  </body>
+</html>

@@ -1,0 +1,241 @@
+"""Serve the local DGX Spark vLLM dashboard."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import secrets
+import subprocess
+from http import HTTPStatus
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, urlparse
+
+from .commands import build_launch_plan
+from .recipes import recipe_map
+from .runtime_state import RuntimeRegistry, utc_now
+from .system_status import (
+    docker_logs,
+    docker_runtimes,
+    gpu_status,
+    health_for_port,
+    process_runtimes,
+    stop_container,
+    system_status,
+)
+
+
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+STATE_DIR = Path(__file__).resolve().parent / "state"
+REGISTRY = RuntimeRegistry(STATE_DIR / "runtimes.json")
+TOKEN_FILE = STATE_DIR / "control-token.txt"
+
+
+def ensure_token() -> str:
+    env_token = os.environ.get("DASHBOARD_TOKEN")
+    if env_token:
+        return env_token
+    TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if not TOKEN_FILE.exists():
+        TOKEN_FILE.write_text(secrets.token_urlsafe(24), encoding="utf-8")
+    return TOKEN_FILE.read_text(encoding="utf-8").strip()
+
+
+CONTROL_TOKEN = ensure_token()
+
+
+class DashboardHandler(SimpleHTTPRequestHandler):
+    server_version = "SparkDashboard/1.0"
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
+
+    def end_headers(self) -> None:
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+        )
+        super().end_headers()
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/"):
+            self._handle_api_get(parsed.path, parse_qs(parsed.query))
+            return
+        if parsed.path in {"/", "/overview", "/recipes", "/runtime", "/launch", "/logs", "/settings"}:
+            self.path = "/index.html"
+        super().do_GET()
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        if not parsed.path.startswith("/api/"):
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        if not self._authorized():
+            self._json({"error": "A valid dashboard token is required."}, HTTPStatus.UNAUTHORIZED)
+            return
+        payload = self._read_json()
+        try:
+            self._handle_api_post(parsed.path, payload)
+        except ValueError as exc:
+            self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+    def _handle_api_get(self, path: str, query: dict[str, list[str]]) -> None:
+        if path == "/api/recipes":
+            self._json({"recipes": [recipe.to_api() for recipe in recipe_map(PROJECT_DIR).values()]})
+        elif path == "/api/runtimes":
+            self._json({"runtimes": current_runtimes(), "containers": docker_runtimes(), "processes": process_runtimes()})
+        elif path == "/api/gpu":
+            self._json(gpu_status())
+        elif path == "/api/system":
+            self._json(system_status(PROJECT_DIR))
+        elif path == "/api/settings":
+            self._json(settings_status())
+        elif path.startswith("/api/logs/"):
+            runtime_id = path.removeprefix("/api/logs/")
+            lines = int((query.get("lines") or ["200"])[0])
+            runtime = REGISTRY.get(runtime_id)
+            if not runtime:
+                self._json({"error": "Runtime was not found."}, HTTPStatus.NOT_FOUND)
+                return
+            logs = docker_logs(str(runtime.get("containerName", "")), max(20, min(lines, 1000)))
+            self._json({"runtimeId": runtime_id, "logs": logs, "events": clean_events(logs)})
+        else:
+            self._json({"error": "API route was not found."}, HTTPStatus.NOT_FOUND)
+
+    def _handle_api_post(self, path: str, payload: dict[str, Any]) -> None:
+        if path == "/api/runtimes":
+            recipes = recipe_map(PROJECT_DIR)
+            slug = str(payload.get("recipeSlug", ""))
+            recipe = recipes.get(slug)
+            if not recipe:
+                raise ValueError("Unknown recipe.")
+            plan = build_launch_plan(PROJECT_DIR, recipe, payload)
+            runtime = {
+                "id": plan.runtime_id,
+                "recipeSlug": recipe.slug,
+                "recipeName": recipe.name,
+                "command": plan.command,
+                "port": plan.port,
+                "host": plan.host,
+                "mode": plan.mode,
+                "containerName": plan.container_name,
+                "status": "Dry Run" if payload.get("dryRun") else "Starting",
+                "startedAt": utc_now(),
+                "updatedAt": utc_now(),
+            }
+            if payload.get("dryRun"):
+                result = subprocess.run(plan.command, cwd=PROJECT_DIR, capture_output=True, text=True, timeout=60)
+                runtime["lastOutput"] = result.stdout[-8000:] + result.stderr[-2000:]
+                runtime["status"] = "Ready" if result.returncode == 0 else "Needs Attention"
+                REGISTRY.upsert(runtime)
+                self._json({"launchId": plan.runtime_id, "status": runtime["status"], "command": plan.command, "output": runtime["lastOutput"]})
+                return
+            process = subprocess.Popen(
+                plan.command,
+                cwd=PROJECT_DIR,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            runtime["processId"] = process.pid
+            REGISTRY.upsert(runtime)
+            self._json({"launchId": plan.runtime_id, "status": "Starting", "command": plan.command}, HTTPStatus.ACCEPTED)
+        elif path.startswith("/api/runtimes/") and path.endswith("/stop"):
+            runtime_id = path.removeprefix("/api/runtimes/").removesuffix("/stop")
+            runtime = REGISTRY.get(runtime_id)
+            if not runtime:
+                self._json({"error": "Runtime was not found."}, HTTPStatus.NOT_FOUND)
+                return
+            stopped = stop_container(str(runtime.get("containerName", "")))
+            REGISTRY.update_status(runtime_id, "Stopped" if stopped else "Needs Attention")
+            self._json({"runtimeId": runtime_id, "stopped": stopped})
+        else:
+            self._json({"error": "API route was not found."}, HTTPStatus.NOT_FOUND)
+
+    def _read_json(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length).decode("utf-8")
+        return json.loads(raw)
+
+    def _authorized(self) -> bool:
+        token = self.headers.get("X-Dashboard-Token", "")
+        origin = self.headers.get("Origin")
+        host = self.headers.get("Host")
+        same_origin = not origin or origin.endswith(host or "")
+        return same_origin and secrets.compare_digest(token, CONTROL_TOKEN)
+
+    def _json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
+        data = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+def current_runtimes() -> list[dict[str, Any]]:
+    containers = {item["containerName"]: item for item in docker_runtimes()}
+    runtimes = []
+    for runtime in REGISTRY.list():
+        item = dict(runtime)
+        container = containers.get(str(item.get("containerName", "")))
+        if container:
+            item["status"] = "Running" if "Up" in container.get("status", "") else container.get("status", "Starting")
+            item["container"] = container
+        elif item.get("status") == "Starting":
+            item["status"] = "Needs Attention"
+        port = int(item.get("port", 0) or 0)
+        item["health"] = health_for_port(port) if port else {"healthy": False}
+        runtimes.append(item)
+    return runtimes
+
+
+def clean_events(logs: str) -> list[dict[str, str]]:
+    events = []
+    keywords = (("error", "Needs Attention"), ("failed", "Needs Attention"), ("ready", "Ready"), ("running", "Running"))
+    for line in logs.splitlines()[-200:]:
+        lower = line.lower()
+        match = next((label for word, label in keywords if word in lower), None)
+        if match:
+            events.append({"status": match, "message": line[-240:]})
+    return events[-40:]
+
+
+def settings_status() -> dict[str, Any]:
+    return {
+        "projectPath": str(PROJECT_DIR),
+        "recipePath": str(PROJECT_DIR / "recipes"),
+        "defaultPortRange": f"{1024}-{65535}",
+        "refreshIntervalSeconds": 5,
+        "demoMode": False,
+        "authenticationToken": "Configured",
+        "healthCheckTimeoutSeconds": 1.5,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the DGX Spark vLLM dashboard.")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8088)
+    args = parser.parse_args()
+    server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
+    print(f"Dashboard: http://{args.host}:{args.port}")
+    print(f"Control token: {CONTROL_TOKEN}")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,17 @@
+{
+  "name": "DGX Spark Control Room",
+  "short_name": "Spark Control",
+  "start_url": "/#overview",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#071014",
+  "theme_color": "#071014",
+  "icons": [
+    {
+      "src": "/cgi-logo.png",
+      "sizes": "56x26",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

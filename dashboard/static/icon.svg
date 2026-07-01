@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 96" role="img" aria-label="CGI">
+  <rect width="180" height="96" rx="8" fill="#e11937"/>
+  <rect x="12" y="12" width="156" height="72" rx="4" fill="#ffffff"/>
+  <rect x="24" y="24" width="132" height="48" rx="2" fill="#111111"/>
+  <text x="90" y="61" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="800" fill="#ffffff">CGI</text>
+</svg>
