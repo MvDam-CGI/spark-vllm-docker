@@ -211,6 +211,7 @@ def current_runtimes() -> list[dict[str, Any]]:
     for runtime in REGISTRY.list():
         item = dict(runtime)
         container = containers.get(str(item.get("containerName", "")))
+        process_running = _process_running(item.get("processId"))
         port = int(item.get("port", 0) or 0)
         item["health"] = health_for_port(port) if port else {"healthy": False}
         if item["health"].get("healthy"):
@@ -218,10 +219,12 @@ def current_runtimes() -> list[dict[str, Any]]:
         elif container:
             item["status"] = "Starting" if "Up" in container.get("status", "") else "Needs Attention"
             item["container"] = container
-        elif _process_running(item.get("processId")):
+        elif process_running:
             item["status"] = "Starting"
-        elif item.get("status") == "Starting":
-            item["status"] = "Needs Attention"
+        elif item.get("status") == "Dry Run":
+            item["status"] = "Dry Run"
+        else:
+            item["status"] = "Stopped"
         runtimes.append(item)
     return runtimes
 

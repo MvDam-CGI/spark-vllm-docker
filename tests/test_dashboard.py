@@ -3,6 +3,8 @@ from subprocess import CompletedProcess
 
 import pytest
 
+from dashboard import server
+
 from dashboard.commands import build_launch_plan
 from dashboard.recipes import load_recipe
 from dashboard.system_status import gpu_status, system_status
@@ -87,3 +89,13 @@ def test_gpu_status_falls_back_to_process_table(monkeypatch):
     assert status["gpus"][0]["memoryUsedMiB"] == 58586
     assert status["gpus"][0]["memoryPercent"] is None
     assert status["gpus"][0]["memorySource"] == "process-table"
+
+def test_current_runtimes_marks_registry_only_runtime_stopped(monkeypatch):
+    monkeypatch.setattr(server.REGISTRY, "list", lambda: [{"id": "old", "port": 8001, "status": "Starting"}])
+    monkeypatch.setattr(server, "docker_runtimes", lambda: [])
+    monkeypatch.setattr(server, "_process_running", lambda pid: False)
+    monkeypatch.setattr(server, "health_for_port", lambda port: {"healthy": False})
+
+    runtimes = server.current_runtimes()
+
+    assert runtimes[0]["status"] == "Stopped"

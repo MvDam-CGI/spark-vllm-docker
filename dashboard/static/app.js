@@ -118,9 +118,8 @@ function renderOverview() {
 
 function renderOverviewRuntimes() {
   const active = state.runtimes.filter((runtime) => ["Starting", "Running", "Ready"].includes(runtime.status));
-  const visible = active.length ? active : state.runtimes;
-  const nodes = visible.length
-    ? visible.map((runtime) => runtimeCard(runtime, { compact: true }))
+  const nodes = active.length
+    ? active.map((runtime) => runtimeCard(runtime, { compact: true }))
     : [emptyState("No models are running", "The Spark is idle. Use Launch to dry run a recipe and then start a model when capacity is available.", "Start a model", "#launch")];
   replaceChildren(byId("overview-runtimes"), nodes);
 }
@@ -455,8 +454,8 @@ function gpuMemoryValue(gpu) {
 function gpuMemoryDetail(gpu) {
   if (!gpu) return gpuUnavailableText();
   if (typeof gpu.memoryPercent === "number") return `${gpu.memoryUsedMiB} MiB used`;
-  if (gpu.memoryUsedMiB) return "Used by GPU processes; total memory is not reported by nvidia-smi.";
-  return "GPU memory is not reported by nvidia-smi.";
+  if (gpu.memoryUsedMiB) return "GPU process memory from nvidia-smi.";
+  return "GPU memory telemetry is unavailable.";
 }
 
 function gpuUnavailableText() {
