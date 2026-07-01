@@ -456,14 +456,28 @@ h2 {
 }
 
 .runtime-card-compact details {
+  display: contents;
   font-size: 0.92rem;
 }
 
-.runtime-card-compact details:not([open]) {
+.runtime-card-compact details > summary {
+  grid-column: 1;
+  grid-row: 4;
   align-self: center;
 }
 
+.runtime-card-compact details[open] > summary {
+  align-self: start;
+}
+
+.runtime-card-compact details > .recipe-meta,
+.runtime-card-compact details > .runtime-memory {
+  grid-column: 1 / -1;
+}
+
 .runtime-card-compact .card-actions {
+  grid-column: 2;
+  grid-row: 4;
   align-self: start;
   justify-content: flex-end;
 }
@@ -471,20 +485,6 @@ h2 {
 .runtime-card-compact .card-actions button {
   min-height: 2rem;
   padding: 0.32rem 0.75rem;
-}
-
-.runtime-card-compact details {
-  grid-column: 1;
-}
-
-.runtime-card-compact details[open] {
-  grid-column: 1 / -1;
-  grid-row: 5;
-}
-
-.runtime-card-compact .card-actions {
-  grid-column: 2;
-  grid-row: 4;
 }
 
 .control-panel-large .panel-heading {
