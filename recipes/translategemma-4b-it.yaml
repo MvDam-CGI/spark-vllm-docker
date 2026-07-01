@@ -1,0 +1,45 @@
+# Recipe: TranslateGemma-4B-IT
+# vLLM-compatible TranslateGemma 4B checkpoint with delimiter-based prompting
+
+recipe_version: "1"
+name: TranslateGemma-4B-IT
+description: vLLM serving Infomaniak-AI/vllm-translategemma-4b-it on a single node
+
+# HuggingFace model to download (optional, for --download-model)
+model: Infomaniak-AI/vllm-translategemma-4b-it
+
+# Container image to use
+container: vllm-node
+
+# This recipe is sized for a single Spark by default
+solo_only: true
+
+# No mods required for the vLLM-compatible checkpoint
+mods: []
+
+# Default settings (can be overridden via CLI)
+defaults:
+  port: 8000
+  host: 0.0.0.0
+  max_model_len: 2048
+  gpu_memory_utilization: 0.7
+  max_num_batched_tokens: 32768
+  max_num_seqs: 256
+
+# Environment variables
+env: {}
+
+# The vLLM serve command template
+command: |
+  vllm serve Infomaniak-AI/vllm-translategemma-4b-it \
+    --served-model-name translategemma-4b-it \
+    --max-model-len {max_model_len} \
+    --gpu-memory-utilization {gpu_memory_utilization} \
+    --kv-cache-dtype fp8 \
+    --max-num-batched-tokens {max_num_batched_tokens} \
+    --max-num-seqs {max_num_seqs} \
+    --enable-prefix-caching \
+    --uvicorn-log-level warning \
+    --load-format safetensors \
+    --host {host} \
+    --port {port}

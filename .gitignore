@@ -1,4 +1,5 @@
 .env
 build-metadata.yaml
+.venv
 .DS_STORE
 __pycache__/
