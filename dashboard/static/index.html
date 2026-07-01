@@ -98,9 +98,62 @@
             </label>
             <details>
               <summary>Advanced launch settings</summary>
-              <label>Max model length<input id="launch-max-len" name="maxModelLen" type="number" min="1" required></label>
-              <label>Tensor parallel<input id="launch-tp" name="tensorParallel" type="number" min="1" max="16" value="1"></label>
-              <label class="switch"><input id="launch-setup" name="setup" type="checkbox"> Setup before launch</label>
+              <div class="advanced-tabs" role="tablist" aria-label="Advanced launch settings">
+                <button type="button" role="tab" data-launch-tab="model" aria-selected="true">Model</button>
+                <button type="button" role="tab" data-launch-tab="cluster" aria-selected="false">Cluster</button>
+                <button type="button" role="tab" data-launch-tab="container" aria-selected="false">Container</button>
+                <button type="button" role="tab" data-launch-tab="extras" aria-selected="false">Extras</button>
+              </div>
+              <div class="advanced-panel" data-launch-tab-panel="model">
+                <div class="advanced-grid">
+                  <label>Max model length<input id="launch-max-len" name="maxModelLen" type="number" min="1" required></label>
+                  <label>Max batched tokens<input id="launch-max-batched-tokens" name="maxNumBatchedTokens" type="number" min="1"></label>
+                  <label>Max sequences<input id="launch-max-seqs" name="maxNumSeqs" type="number" min="1"></label>
+                  <label>Tensor parallel<input id="launch-tp" name="tensorParallel" type="number" min="1" max="16" value="1"></label>
+                </div>
+              </div>
+              <div class="advanced-panel" data-launch-tab-panel="cluster" hidden>
+                <div class="advanced-grid">
+                  <label>Cluster nodes<input id="launch-nodes" name="nodes" autocomplete="off" placeholder="10.0.0.1,10.0.0.2"></label>
+                  <label>NCCL debug<select id="launch-nccl-debug" name="ncclDebug">
+                    <option value="">Default</option>
+                    <option>VERSION</option>
+                    <option>WARN</option>
+                    <option>INFO</option>
+                    <option>TRACE</option>
+                  </select></label>
+                  <label>Master port<input id="launch-master-port" name="masterPort" type="number" min="1024" max="65535"></label>
+                  <label>Ethernet interface<input id="launch-eth-if" name="ethIf" autocomplete="off" placeholder="eth0"></label>
+                  <label>InfiniBand interface<input id="launch-ib-if" name="ibIf" autocomplete="off" placeholder="ib0"></label>
+                </div>
+              </div>
+              <div class="advanced-panel" data-launch-tab-panel="container" hidden>
+                <div class="advanced-grid">
+                  <label>Container override<input id="launch-container" name="containerOverride" autocomplete="off" placeholder="vllm-node:latest"></label>
+                  <label>Build jobs<input id="launch-build-jobs" name="buildJobs" type="number" min="1" max="256"></label>
+                  <label>Memory limit GB<input id="launch-mem-limit" name="memLimitGb" type="number" min="1"></label>
+                  <label>Memory+swap limit GB<input id="launch-mem-swap-limit" name="memSwapLimitGb" type="number" min="1"></label>
+                  <label>PIDs limit<input id="launch-pids-limit" name="pidsLimit" type="number" min="1"></label>
+                  <label>Shared memory GB<input id="launch-shm-size" name="shmSizeGb" type="number" min="1"></label>
+                </div>
+                <div class="advanced-switches">
+                  <label class="switch"><input id="launch-setup" name="setup" type="checkbox"> Setup before launch</label>
+                  <label class="switch"><input id="launch-build-only" name="buildOnly" type="checkbox"> Build only</label>
+                  <label class="switch"><input id="launch-download-only" name="downloadOnly" type="checkbox"> Download only</label>
+                  <label class="switch"><input id="launch-force-build" name="forceBuild" type="checkbox"> Force build</label>
+                  <label class="switch"><input id="launch-force-download" name="forceDownload" type="checkbox"> Force download</label>
+                  <label class="switch"><input id="launch-daemon" name="daemon" type="checkbox"> Daemon mode</label>
+                  <label class="switch"><input id="launch-no-cache-dirs" name="noCacheDirs" type="checkbox"> No cache dirs</label>
+                  <label class="switch"><input id="launch-keep-entrypoint" name="keepEntrypoint" type="checkbox"> Keep entrypoint</label>
+                  <label class="switch"><input id="launch-non-privileged" name="nonPrivileged" type="checkbox"> Non-privileged</label>
+                </div>
+              </div>
+              <div class="advanced-panel" data-launch-tab-panel="extras" hidden>
+                <label>Environment variables<textarea id="launch-env-vars" name="envVars" rows="3" placeholder="HF_TOKEN=...&#10;VLLM_LOGGING_LEVEL=DEBUG"></textarea></label>
+                <label>Extra mods<textarea id="launch-apply-mods" name="applyMods" rows="2" placeholder="mods/my-patch"></textarea></label>
+                <label>Published ports<textarea id="launch-publish-ports" name="publishPorts" rows="2" placeholder="8000:8000"></textarea></label>
+                <label>Extra vLLM arguments<textarea id="launch-extra-vllm" name="extraVllmArgs" rows="3" placeholder="--load-format auto --enforce-eager --seed 42"></textarea></label>
+              </div>
               <p id="selected-recipe-summary" class="muted"></p>
             </details>
             <label class="switch"><input id="launch-dry-run" name="dryRun" type="checkbox" checked> Dry run first</label>
@@ -186,3 +239,4 @@
     </dialog>
   </body>
 </html>
+

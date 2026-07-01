@@ -42,6 +42,75 @@ def test_build_launch_plan_uses_argument_array():
     assert "8001" in plan.command
     assert plan.container_name == "vllm-translategemma-4b-it-8001"
 
+def test_build_launch_plan_includes_advanced_options():
+    recipe = load_recipe(PROJECT_DIR / "recipes" / "glm-4.7-flash-awq.yaml")
+
+    plan = build_launch_plan(
+        PROJECT_DIR,
+        recipe,
+        {
+            "mode": "cluster",
+            "port": 8002,
+            "host": "0.0.0.0",
+            "gpuMemoryUtilization": 0.82,
+            "maxModelLen": 8192,
+            "maxNumBatchedTokens": 4096,
+            "maxNumSeqs": 64,
+            "tensorParallel": 2,
+            "nodes": "10.0.0.1,10.0.0.2",
+            "containerOverride": "vllm-node:test",
+            "ncclDebug": "INFO",
+            "envVars": ["VLLM_LOGGING_LEVEL=DEBUG"],
+            "applyMods": ["mods/test-mod"],
+            "masterPort": 29501,
+            "ethIf": "eth0",
+            "ibIf": "ib0",
+            "buildJobs": 8,
+            "noCacheDirs": True,
+            "keepEntrypoint": True,
+            "nonPrivileged": True,
+            "memLimitGb": 120,
+            "memSwapLimitGb": 128,
+            "pidsLimit": 4096,
+            "shmSizeGb": 64,
+            "buildOnly": True,
+            "forceBuild": True,
+            "dryRun": True,
+            "extraVllmArgs": "--load-format auto --seed 42",
+        },
+    )
+
+    assert "--no-ray" in plan.command
+    assert plan.command[plan.command.index("--nodes") + 1] == "10.0.0.1,10.0.0.2"
+    assert plan.command[plan.command.index("--max-num-batched-tokens") + 1] == "4096"
+    assert plan.command[plan.command.index("--max-num-seqs") + 1] == "64"
+    assert plan.command[plan.command.index("--container") + 1] == "vllm-node:test"
+    assert plan.command[plan.command.index("--env") + 1] == "VLLM_LOGGING_LEVEL=DEBUG"
+    assert plan.command[plan.command.index("--apply-mod") + 1] == "mods/test-mod"
+    assert "--build-only" in plan.command
+    assert "--force-build" in plan.command
+    assert "--no-cache-dirs" in plan.command
+    assert "--keep-entrypoint" in plan.command
+    assert "--non-privileged" in plan.command
+    assert plan.command[-5:] == ["--", "--load-format", "auto", "--seed", "42"]
+
+
+def test_build_launch_plan_rejects_publish_ports_in_cluster_mode():
+    recipe = load_recipe(PROJECT_DIR / "recipes" / "glm-4.7-flash-awq.yaml")
+
+    with pytest.raises(ValueError, match="Published ports"):
+        build_launch_plan(
+            PROJECT_DIR,
+            recipe,
+            {
+                "mode": "cluster",
+                "port": 8002,
+                "host": "0.0.0.0",
+                "gpuMemoryUtilization": 0.82,
+                "maxModelLen": 8192,
+                "publishPorts": ["8000:8000"],
+            },
+        )
 def test_build_launch_plan_rejects_invalid_port():
     recipe = load_recipe(PROJECT_DIR / "recipes" / "translategemma-4b-it.yaml")
 
@@ -180,3 +249,4 @@ def test_parse_memory_breakdown_handles_vllm_gb_lines():
 
     assert breakdown["modelMiB"] == 7680
     assert breakdown["contextMiB"] == 28928
+

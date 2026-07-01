@@ -179,6 +179,8 @@ Recipe overrides:
   --tensor-parallel, --tp N   Override tensor parallelism
   --gpu-memory-utilization N  Override GPU memory utilization (--gpu-mem)
   --max-model-len N           Override max model length
+  --max-num-batched-tokens N  Override maximum batched tokens
+  --max-num-seqs N            Override maximum concurrent sequences
 
 Setup options:
   --setup                     Full setup: build + download + run
@@ -319,3 +321,4 @@ command: |
 ```
 
 This separation follows the Unix philosophy: `run-recipe.sh` provides convenience, while the underlying scripts remain focused on their specific tasks.
+

@@ -774,7 +774,18 @@ Examples:
         dest="max_model_len",
         help="Override max model length",
     )
-
+    override_group.add_argument(
+        "--max-num-batched-tokens",
+        type=int,
+        dest="max_num_batched_tokens",
+        help="Override maximum batched tokens",
+    )
+    override_group.add_argument(
+        "--max-num-seqs",
+        type=int,
+        dest="max_num_seqs",
+        help="Override maximum concurrent sequences",
+    )
     # Launch options (passed to launch-cluster.sh)
     launch_group = parser.add_argument_group(
         "Launch options (passed to launch-cluster.sh)"
@@ -1226,6 +1237,8 @@ Examples:
         "tensor_parallel",
         "gpu_memory_utilization",
         "max_model_len",
+        "max_num_batched_tokens",
+        "max_num_seqs",
     ]:
         value = getattr(args, key, None)
         if value is not None:
@@ -1245,6 +1258,8 @@ Examples:
             "-tp": "tensor_parallel",
             "--gpu-memory-utilization": "gpu_memory_utilization",
             "--max-model-len": "max_model_len",
+            "--max-num-batched-tokens": "max_num_batched_tokens",
+            "--max-num-seqs": "max_num_seqs",
         }
         for i, arg in enumerate(extra_args):
             # Check both exact flag and =value syntax
@@ -1440,3 +1455,4 @@ Examples:
 
 if __name__ == "__main__":
     sys.exit(main())
+

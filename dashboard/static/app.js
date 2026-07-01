@@ -54,6 +54,9 @@ function bindForms() {
   byId("launch-recipe").addEventListener("change", applyRecipeDefaults);
   byId("launch-form").addEventListener("input", updateCommandPreview);
   byId("launch-form").addEventListener("submit", launchRuntime);
+  document.querySelectorAll("[data-launch-tab]").forEach((button) => {
+    button.addEventListener("click", () => showLaunchTab(button.dataset.launchTab));
+  });
   byId("token-form").addEventListener("submit", (event) => {
     event.preventDefault();
     sessionStorage.setItem(tokenKey, byId("control-token").value);
@@ -62,6 +65,15 @@ function bindForms() {
   byId("refresh-logs").addEventListener("click", refreshLogs);
   byId("copy-logs").addEventListener("click", () => navigator.clipboard.writeText(byId("raw-logs").textContent));
   byId("logs-runtime").addEventListener("change", refreshLogs);
+}
+
+function showLaunchTab(tab) {
+  document.querySelectorAll("[data-launch-tab]").forEach((button) => {
+    button.setAttribute("aria-selected", String(button.dataset.launchTab === tab));
+  });
+  document.querySelectorAll("[data-launch-tab-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.launchTabPanel !== tab;
+  });
 }
 
 function rememberDetailsState(event) {
@@ -291,6 +303,8 @@ function applyRecipeDefaults() {
   byId("launch-host").value = recipe.defaultHost;
   byId("launch-gpu-memory").value = recipe.defaultGpuMemoryUtilization;
   byId("launch-max-len").value = recipe.defaultMaxModelLen;
+  byId("launch-max-batched-tokens").value = recipe.defaults?.max_num_batched_tokens || "";
+  byId("launch-max-seqs").value = recipe.defaults?.max_num_seqs || "";
   setText("selected-recipe-summary", `${recipe.name}. ${recipe.description || "No description provided."}`);
   updateCommandPreview();
 }
@@ -301,11 +315,38 @@ function updateCommandPreview() {
     setText("command-preview", "Waiting for recipes...");
     return;
   }
-  const args = ["./run-recipe.sh", payload.recipeSlug, payload.mode === "solo" ? "--solo" : "--no-ray", "--port", payload.port || "", "--host", payload.host || ""];
-  args.push("--gpu-mem", payload.gpuMemoryUtilization || "", "--max-model-len", payload.maxModelLen || "", "--tp", payload.tensorParallel || "1");
+  const args = ["./run-recipe.sh", payload.recipeSlug, "--port", payload.port || "", "--host", payload.host || ""];
+  args.push("--gpu-mem", payload.gpuMemoryUtilization || "", "--max-model-len", payload.maxModelLen || "");
+  if (payload.maxNumBatchedTokens) args.push("--max-num-batched-tokens", payload.maxNumBatchedTokens);
+  if (payload.maxNumSeqs) args.push("--max-num-seqs", payload.maxNumSeqs);
+  args.push("--tp", payload.tensorParallel || "1");
   args.push("--name", `vllm-${payload.recipeSlug}-${payload.port || "port"}`);
+  if (payload.containerOverride) args.push("--container", payload.containerOverride);
+  args.push(payload.mode === "solo" ? "--solo" : "--no-ray");
+  if (payload.nodes) args.push("--nodes", payload.nodes);
   if (payload.setup) args.push("--setup");
+  if (payload.buildOnly) args.push("--build-only");
+  if (payload.downloadOnly) args.push("--download-only");
+  if (payload.forceBuild) args.push("--force-build");
+  if (payload.forceDownload) args.push("--force-download");
+  if (payload.daemon) args.push("--daemon");
+  if (payload.ncclDebug) args.push("--nccl-debug", payload.ncclDebug);
+  payload.envVars.forEach((value) => args.push("--env", value));
+  payload.applyMods.forEach((value) => args.push("--apply-mod", value));
+  payload.publishPorts.forEach((value) => args.push("--publish", value));
+  if (payload.masterPort) args.push("--master-port", payload.masterPort);
+  if (payload.ethIf) args.push("--eth-if", payload.ethIf);
+  if (payload.ibIf) args.push("--ib-if", payload.ibIf);
+  if (payload.buildJobs) args.push("-j", payload.buildJobs);
+  if (payload.noCacheDirs) args.push("--no-cache-dirs");
+  if (payload.keepEntrypoint) args.push("--keep-entrypoint");
+  if (payload.nonPrivileged) args.push("--non-privileged");
+  if (payload.memLimitGb) args.push("--mem-limit-gb", payload.memLimitGb);
+  if (payload.memSwapLimitGb) args.push("--mem-swap-limit-gb", payload.memSwapLimitGb);
+  if (payload.pidsLimit) args.push("--pids-limit", payload.pidsLimit);
+  if (payload.shmSizeGb) args.push("--shm-size-gb", payload.shmSizeGb);
   if (payload.dryRun) args.push("--dry-run");
+  if (payload.extraVllmArgs) args.push("--", payload.extraVllmArgs);
   setText("gpu-memory-output", payload.gpuMemoryUtilization || "");
   setText("command-preview", args.join(" "));
 }
@@ -399,10 +440,43 @@ function launchPayload() {
     host: data.get("host"),
     gpuMemoryUtilization: Number(data.get("gpuMemoryUtilization")),
     maxModelLen: Number(data.get("maxModelLen")),
+    maxNumBatchedTokens: optionalNumber(data.get("maxNumBatchedTokens")),
+    maxNumSeqs: optionalNumber(data.get("maxNumSeqs")),
     tensorParallel: Number(data.get("tensorParallel") || 1),
+    nodes: data.get("nodes"),
+    containerOverride: data.get("containerOverride"),
+    ncclDebug: data.get("ncclDebug"),
+    envVars: listField("launch-env-vars"),
+    applyMods: listField("launch-apply-mods"),
+    publishPorts: listField("launch-publish-ports"),
+    masterPort: optionalNumber(data.get("masterPort")),
+    ethIf: data.get("ethIf"),
+    ibIf: data.get("ibIf"),
+    buildJobs: optionalNumber(data.get("buildJobs")),
+    memLimitGb: optionalNumber(data.get("memLimitGb")),
+    memSwapLimitGb: optionalNumber(data.get("memSwapLimitGb")),
+    pidsLimit: optionalNumber(data.get("pidsLimit")),
+    shmSizeGb: optionalNumber(data.get("shmSizeGb")),
+    extraVllmArgs: data.get("extraVllmArgs"),
     setup: byId("launch-setup").checked,
+    buildOnly: byId("launch-build-only").checked,
+    downloadOnly: byId("launch-download-only").checked,
+    forceBuild: byId("launch-force-build").checked,
+    forceDownload: byId("launch-force-download").checked,
+    daemon: byId("launch-daemon").checked,
+    noCacheDirs: byId("launch-no-cache-dirs").checked,
+    keepEntrypoint: byId("launch-keep-entrypoint").checked,
+    nonPrivileged: byId("launch-non-privileged").checked,
     dryRun: byId("launch-dry-run").checked,
   };
+}
+
+function listField(id) {
+  return byId(id).value.split(/[\n,]+/).map((item) => item.trim()).filter(Boolean);
+}
+
+function optionalNumber(value) {
+  return value === null || value === "" ? null : Number(value);
 }
 
 async function apiGet(path) {
@@ -583,3 +657,4 @@ function textNode(text) {
 function replaceChildren(parent, children) {
   parent.replaceChildren(...children);
 }
+

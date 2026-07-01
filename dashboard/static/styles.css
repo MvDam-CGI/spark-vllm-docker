@@ -52,7 +52,8 @@ a {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -581,7 +582,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   min-height: 2.45rem;
   padding: 0.45rem 0.6rem;
 }
@@ -589,6 +591,10 @@ select {
 input[type="radio"],
 input[type="checkbox"] {
   min-height: auto;
+}
+
+textarea {
+  resize: vertical;
 }
 
 .switch,
@@ -600,6 +606,42 @@ fieldset label,
   margin: 0;
 }
 
+
+.advanced-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.75rem 0;
+}
+
+.advanced-tabs button {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0.45rem 0.75rem;
+}
+
+.advanced-tabs button[aria-selected="true"] {
+  border-color: var(--accent);
+  background: rgba(0, 188, 212, 0.14);
+  color: var(--text);
+}
+
+.advanced-panel {
+  padding-top: 0.25rem;
+}
+
+.advanced-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+}
+
+.advanced-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  margin: 0.5rem 0 0.9rem;
+}
 .danger-button {
   border-color: var(--red);
   background: #4b151e;
@@ -736,3 +778,4 @@ footer {
     scroll-behavior: auto;
   }
 }
+
