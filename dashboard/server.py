@@ -290,7 +290,7 @@ def clean_events(logs: str) -> list[dict[str, str]]:
 
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 MEMORY_PATTERNS = (
-    ("modelMiB", re.compile(r"(?:loading model weights|model weights|model memory|weights).*?(\d+(?:\.\d+)?)\s*(GiB|GB|MiB|MB)", re.IGNORECASE)),
+    ("modelMiB", re.compile(r"(?:loading model weights|model loading|model weights|model memory|weights).*?(\d+(?:\.\d+)?)\s*(GiB|GB|MiB|MB)", re.IGNORECASE)),
     ("contextMiB", re.compile(r"(?:kv cache|context|cache).*?(\d+(?:\.\d+)?)\s*(GiB|GB|MiB|MB)", re.IGNORECASE)),
 )
 

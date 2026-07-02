@@ -243,10 +243,9 @@ def test_current_runtimes_persists_new_memory_breakdown(monkeypatch):
     assert runtimes[0]["memoryBreakdown"] == {"modelMiB": 7680, "contextMiB": 28928}
     assert updates == [("one", {"memoryBreakdown": {"modelMiB": 7680, "contextMiB": 28928}})]
 def test_parse_memory_breakdown_handles_vllm_gb_lines():
-    logs = "Loading model weights took 7.5 GB\nGPU KV cache size: 28.25GiB\n"
+    logs = "Model loading took 8.2 GiB memory\nGPU KV cache size: 28.25GiB\n"
 
     breakdown = server.parse_memory_breakdown(logs)
 
-    assert breakdown["modelMiB"] == 7680
+    assert breakdown["modelMiB"] == 8396.8
     assert breakdown["contextMiB"] == 28928
-
