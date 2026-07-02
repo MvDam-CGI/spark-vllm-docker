@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -128,6 +129,22 @@ def docker_logs(container_name: str, lines: int) -> str:
 def stop_container(container_name: str) -> bool:
     result = run_command(["docker", "stop", container_name], timeout=10.0)
     return bool(result and result.returncode == 0)
+
+
+def stop_vllm_process(pid: Any) -> bool:
+    try:
+        pid_int = int(pid)
+    except (TypeError, ValueError):
+        return False
+    result = run_command(["ps", "-p", str(pid_int), "-o", "args="])
+    command = (result.stdout or "").strip() if result and result.returncode == 0 else ""
+    if "vllm" not in command.lower():
+        return False
+    try:
+        os.kill(pid_int, signal.SIGTERM)
+    except OSError:
+        return False
+    return True
 
 
 def _gpu_status_from_full_smi() -> dict[str, Any] | None:

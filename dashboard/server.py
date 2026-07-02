@@ -24,6 +24,7 @@ from .system_status import (
     health_for_port,
     process_runtimes,
     stop_container,
+    stop_vllm_process,
     system_status,
 )
 
@@ -175,14 +176,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         elif path.startswith("/api/runtimes/") and path.endswith("/stop"):
             runtime_id = path.removeprefix("/api/runtimes/").removesuffix("/stop")
             runtime = REGISTRY.get(runtime_id)
-            if not runtime:
+            if runtime:
+                stopped = stop_container(str(runtime.get("containerName", "")))
+                if not stopped and runtime.get("processId"):
+                    stopped = stop_vllm_process(runtime.get("processId"))
+                if stopped:
+                    REGISTRY.update_status(runtime_id, "Manually Stopped", {"stopRequestedAt": utc_now(), "stopReason": "dashboard"})
+                else:
+                    REGISTRY.update_status(runtime_id, "Needs Attention")
+                self._json({"runtimeId": runtime_id, "stopped": stopped})
+                return
+            manual_pid = _manual_runtime_pid(runtime_id)
+            if manual_pid is None:
                 self._json({"error": "Runtime was not found."}, HTTPStatus.NOT_FOUND)
                 return
-            stopped = stop_container(str(runtime.get("containerName", "")))
-            if stopped:
-                REGISTRY.update_status(runtime_id, "Manually Stopped", {"stopRequestedAt": utc_now(), "stopReason": "dashboard"})
-            else:
-                REGISTRY.update_status(runtime_id, "Needs Attention")
+            stopped = stop_vllm_process(manual_pid)
             self._json({"runtimeId": runtime_id, "stopped": stopped})
         else:
             self._json({"error": "API route was not found."}, HTTPStatus.NOT_FOUND)
@@ -242,6 +250,7 @@ def current_runtimes() -> list[dict[str, Any]]:
         if _has_new_memory_values(item.get("memoryBreakdown"), runtime.get("memoryBreakdown")):
             REGISTRY.update_fields(str(item.get("id")), {"memoryBreakdown": item["memoryBreakdown"]})
         runtimes.append(item)
+    _add_manual_process_runtimes(runtimes)
     _assign_gpu_memory(runtimes, gpu)
     return runtimes
 
@@ -371,6 +380,37 @@ def _command_arg(command: Any, flag: str) -> str | None:
     if index + 1 >= len(command):
         return None
     return str(command[index + 1])
+
+
+def _add_manual_process_runtimes(runtimes: list[dict[str, Any]]) -> None:
+    known_pids = {str(runtime.get("processId")) for runtime in runtimes if runtime.get("processId")}
+    for process in process_runtimes():
+        pid = str(process.get("pid", ""))
+        if not pid or pid in known_pids:
+            continue
+        runtimes.append(
+            {
+                "id": f"manual-vllm-{pid}",
+                "recipeName": "Manual vLLM process",
+                "status": "Running",
+                "mode": "Manual",
+                "port": "Unknown",
+                "processId": pid,
+                "processCommand": process.get("command", ""),
+                "health": {"healthy": False},
+                "memoryBreakdown": {"modelMiB": None, "contextMiB": None},
+            }
+        )
+
+
+def _manual_runtime_pid(runtime_id: str) -> int | None:
+    prefix = "manual-vllm-"
+    if not runtime_id.startswith(prefix):
+        return None
+    try:
+        return int(runtime_id.removeprefix(prefix))
+    except ValueError:
+        return None
 
 def settings_status() -> dict[str, Any]:
     return {

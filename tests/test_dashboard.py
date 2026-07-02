@@ -4,6 +4,7 @@ from subprocess import CompletedProcess
 import pytest
 
 from dashboard import server
+from dashboard import system_status as system_status_helpers
 
 from dashboard.commands import build_launch_plan
 from dashboard.recipes import load_recipe
@@ -154,6 +155,56 @@ def test_gpu_status_falls_back_to_process_table(monkeypatch):
     assert status["gpus"][0]["memoryPercent"] == 44.7
     assert status["gpus"][0]["memorySource"] == "process-table"
     assert status["gpus"][0]["memoryTotalMiB"] == 131072
+
+def test_current_runtimes_adds_manual_vllm_process(monkeypatch):
+    monkeypatch.setattr(server.REGISTRY, "list", lambda: [])
+    monkeypatch.setattr(server, "docker_runtimes", lambda: [])
+    monkeypatch.setattr(server, "gpu_status", lambda: {"gpus": []})
+    monkeypatch.setattr(server, "process_runtimes", lambda: [{"pid": "123", "command": "vllm serve test-model"}])
+
+    runtimes = server.current_runtimes()
+
+    assert runtimes == [
+        {
+            "id": "manual-vllm-123",
+            "recipeName": "Manual vLLM process",
+            "status": "Running",
+            "mode": "Manual",
+            "port": "Unknown",
+            "processId": "123",
+            "processCommand": "vllm serve test-model",
+            "health": {"healthy": False},
+            "memoryBreakdown": {"modelMiB": None, "contextMiB": None},
+        }
+    ]
+
+
+def test_stop_vllm_process_requires_current_vllm_command(monkeypatch):
+    killed = []
+
+    monkeypatch.setattr(
+        system_status_helpers,
+        "run_command",
+        lambda args, timeout=2.0: CompletedProcess(args, 0, "python worker.py\n", ""),
+    )
+    monkeypatch.setattr(system_status_helpers.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+
+    assert system_status_helpers.stop_vllm_process(123) is False
+    assert killed == []
+
+
+def test_stop_vllm_process_sends_sigterm_to_vllm_command(monkeypatch):
+    killed = []
+
+    monkeypatch.setattr(
+        system_status_helpers,
+        "run_command",
+        lambda args, timeout=2.0: CompletedProcess(args, 0, "vllm serve test-model\n", ""),
+    )
+    monkeypatch.setattr(system_status_helpers.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+
+    assert system_status_helpers.stop_vllm_process("123") is True
+    assert killed == [(123, system_status_helpers.signal.SIGTERM)]
 
 def test_current_runtimes_marks_registry_only_runtime_exited(monkeypatch):
     monkeypatch.setattr(server.REGISTRY, "list", lambda: [{"id": "old", "port": 8001, "status": "Starting"}])

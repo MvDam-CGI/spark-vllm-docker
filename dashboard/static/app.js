@@ -406,8 +406,14 @@ async function stopRuntime(runtimeId) {
     dialog.addEventListener("close", () => resolve(dialog.returnValue === "confirm"), { once: true });
   });
   if (!confirmed) return;
-  await apiPost(`/api/runtimes/${runtimeId}/stop`, {});
-  await refreshAll();
+  try {
+    const result = await apiPost(`/api/runtimes/${runtimeId}/stop`, {});
+    if (!result.stopped) throw new Error("Stop could not terminate this runtime. Check that it is still a vLLM process and that the dashboard has permission to stop it.");
+    await refreshAll();
+  } catch (error) {
+    setText("connection-state", error.message);
+    if (error.message.includes("control token")) location.hash = "settings";
+  }
 }
 
 function renderLogsOptions() {
@@ -494,16 +500,23 @@ async function apiPost(path, payload) {
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
-      "X-Dashboard-Token": sessionStorage.getItem(tokenKey) || byId("control-token").value,
+      "X-Dashboard-Token": currentControlToken(),
     },
     body: JSON.stringify(payload),
   });
   return readJson(response);
 }
 
+function currentControlToken() {
+  return byId("control-token").value || sessionStorage.getItem(tokenKey) || "";
+}
+
 async function readJson(response) {
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "Request failed.");
+  if (!response.ok) {
+    if (response.status === 401) throw new Error("Set the dashboard control token in Settings, then try again.");
+    throw new Error(data.error || "Request failed.");
+  }
   return data;
 }
 
