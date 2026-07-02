@@ -201,6 +201,65 @@ def test_process_runtimes_includes_listening_port(monkeypatch):
 
     assert system_status_helpers.process_runtimes() == [{"pid": "123", "command": "vllm serve model", "port": "8005"}]
 
+
+def test_process_runtimes_keeps_full_command_for_port_parsing(monkeypatch):
+    long_command = "vllm serve " + ("x" * 260) + " --port 8005"
+
+    def fake_run_command(args, timeout=2.0):
+        if args == ["pgrep", "-af", "vllm"]:
+            return CompletedProcess(args, 0, f"123 {long_command}\n", "")
+        if args == ["ss", "-ltnp"]:
+            return CompletedProcess(args, 1, "", "")
+        return CompletedProcess(args, 1, "", "")
+
+    monkeypatch.setattr(system_status_helpers, "run_command", fake_run_command)
+
+    assert system_status_helpers.process_runtimes() == [{"pid": "123", "command": long_command}]
+
+
+def test_current_runtimes_suppresses_manual_process_matching_registered_runtime(monkeypatch):
+    monkeypatch.setattr(
+        server.REGISTRY,
+        "list",
+        lambda: [
+            {
+                "id": "translategemma-4b-it-8005",
+                "recipeSlug": "translategemma-4b-it",
+                "recipeName": "TranslateGemma-4B-IT",
+                "port": 8005,
+                "status": "Starting",
+                "processId": "319777",
+            }
+        ],
+    )
+    monkeypatch.setattr(server, "docker_runtimes", lambda: [])
+    monkeypatch.setattr(server, "_process_running", lambda pid: True)
+    monkeypatch.setattr(server, "health_for_port", lambda port: {"healthy": True})
+    monkeypatch.setattr(server, "gpu_status", lambda: {"gpus": []})
+    monkeypatch.setattr(server, "docker_logs", lambda container_name, lines: "")
+    monkeypatch.setattr(
+        server,
+        "process_runtimes",
+        lambda: [
+            {
+                "pid": "319917",
+                "command": "/usr/bin/python3 /usr/local/bin/vllm serve Infomaniak-AI/vllm-translategemma-4b-it --port 8005",
+            }
+        ],
+    )
+
+    runtimes = server.current_runtimes()
+
+    assert len(runtimes) == 1
+    assert runtimes[0]["id"] == "translategemma-4b-it-8005"
+
+
+def test_gpu_memory_target_prefers_actual_launch_command():
+    runtime = {"gpuMemoryUtilization": 0.45, "command": ["./run-recipe.sh", "model", "--gpu-mem", "0.4"]}
+
+    assert server._gpu_memory_target_percent(runtime) == 40
+
+
 def test_stop_vllm_process_requires_current_vllm_command(monkeypatch):
     killed = []
 

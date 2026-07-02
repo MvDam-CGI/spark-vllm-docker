@@ -106,7 +106,7 @@ def process_runtimes() -> list[dict[str, str]]:
         if "pgrep" in line:
             continue
         pid, _, command = line.partition(" ")
-        process = {"pid": pid, "command": command[:240]}
+        process = {"pid": pid, "command": command}
         if pid in ports_by_pid:
             process["port"] = ports_by_pid[pid]
         processes.append(process)

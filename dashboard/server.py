@@ -359,9 +359,11 @@ def _assign_gpu_memory(runtimes: list[dict[str, Any]], gpu: dict[str, Any]) -> N
 
 
 def _gpu_memory_target_percent(runtime: dict[str, Any]) -> float | None:
-    value = runtime.get("gpuMemoryUtilization")
+    value = _command_arg(runtime.get("command"), "--gpu-mem")
     if value is None:
-        value = _command_arg(runtime.get("command"), "--gpu-mem")
+        value = _command_arg(runtime.get("command"), "--gpu-memory-utilization")
+    if value is None:
+        value = runtime.get("gpuMemoryUtilization")
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -374,17 +376,18 @@ def _gpu_memory_target_percent(runtime: dict[str, Any]) -> float | None:
 def _command_arg(command: Any, flag: str) -> str | None:
     if not isinstance(command, list):
         return None
-    try:
-        index = command.index(flag)
-    except ValueError:
-        return None
-    if index + 1 >= len(command):
-        return None
-    return str(command[index + 1])
+    for index, arg in enumerate(command):
+        if arg == flag and index + 1 < len(command):
+            return str(command[index + 1])
+        if isinstance(arg, str) and arg.startswith(f"{flag}="):
+            return arg.split("=", 1)[1]
+    return None
 
 
 def _add_manual_process_runtimes(runtimes: list[dict[str, Any]]) -> None:
     known_pids = {str(runtime.get("processId")) for runtime in runtimes if runtime.get("processId")}
+    known_identities = {_runtime_identity_key(runtime) for runtime in runtimes}
+    known_identities.discard(None)
     seen_manual = set()
     for process in process_runtimes():
         pid = str(process.get("pid", ""))
@@ -392,6 +395,9 @@ def _add_manual_process_runtimes(runtimes: list[dict[str, Any]]) -> None:
         if not pid or pid in known_pids or not _is_manual_vllm_server_command(command):
             continue
         identity = _manual_runtime_identity(command, process.get("port"))
+        identity_key = _runtime_identity_key(identity)
+        if identity_key in known_identities:
+            continue
         dedupe_key = (identity.get("recipeSlug"), identity["name"], identity.get("port") or "Unknown")
         if dedupe_key in seen_manual:
             continue
@@ -410,6 +416,14 @@ def _add_manual_process_runtimes(runtimes: list[dict[str, Any]]) -> None:
                 "memoryBreakdown": {"modelMiB": None, "contextMiB": None},
             }
         )
+
+
+def _runtime_identity_key(runtime: dict[str, Any]) -> tuple[str, str] | None:
+    recipe_slug = runtime.get("recipeSlug")
+    port = runtime.get("port")
+    if not recipe_slug or not port or str(port) == "Unknown":
+        return None
+    return (str(recipe_slug), str(port))
 
 
 def _is_manual_vllm_server_command(command: str) -> bool:
