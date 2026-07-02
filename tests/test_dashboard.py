@@ -164,7 +164,8 @@ def test_current_runtimes_adds_only_manual_vllm_server_processes(monkeypatch):
         server,
         "process_runtimes",
         lambda: [
-            {"pid": "123", "command": "vllm serve Infomaniak-AI/vllm-translategemma-4b-it --port 8005"},
+            {"pid": "123", "command": "vllm serve Infomaniak-AI/vllm-translategemma-4b-it", "port": "8005"},
+            {"pid": "126", "command": "vllm serve Infomaniak-AI/vllm-translategemma-4b-it", "port": "8005"},
             {"pid": "124", "command": "VLLM::EngineCore"},
             {"pid": "125", "command": "python -m multiprocessing.spawn vllm worker"},
         ],
@@ -181,12 +182,24 @@ def test_current_runtimes_adds_only_manual_vllm_server_processes(monkeypatch):
             "mode": "Manual",
             "port": "8005",
             "processId": "123",
-            "processCommand": "vllm serve Infomaniak-AI/vllm-translategemma-4b-it --port 8005",
+            "processCommand": "vllm serve Infomaniak-AI/vllm-translategemma-4b-it",
             "health": {"healthy": False},
             "memoryBreakdown": {"modelMiB": None, "contextMiB": None},
         }
     ]
 
+
+def test_process_runtimes_includes_listening_port(monkeypatch):
+    def fake_run_command(args, timeout=2.0):
+        if args == ["pgrep", "-af", "vllm"]:
+            return CompletedProcess(args, 0, "123 vllm serve model\n", "")
+        if args == ["ss", "-ltnp"]:
+            return CompletedProcess(args, 0, "LISTEN 0 4096 0.0.0.0:8005 0.0.0.0:* users:((\"python\",pid=123,fd=7))\n", "")
+        return CompletedProcess(args, 1, "", "")
+
+    monkeypatch.setattr(system_status_helpers, "run_command", fake_run_command)
+
+    assert system_status_helpers.process_runtimes() == [{"pid": "123", "command": "vllm serve model", "port": "8005"}]
 
 def test_stop_vllm_process_requires_current_vllm_command(monkeypatch):
     killed = []

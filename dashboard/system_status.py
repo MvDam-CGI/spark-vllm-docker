@@ -100,14 +100,34 @@ def process_runtimes() -> list[dict[str, str]]:
     result = run_command(["pgrep", "-af", "vllm"])
     if not result or result.returncode != 0:
         return []
+    ports_by_pid = _listening_ports_by_pid()
     processes = []
     for line in result.stdout.splitlines():
         if "pgrep" in line:
             continue
         pid, _, command = line.partition(" ")
-        processes.append({"pid": pid, "command": command[:240]})
+        process = {"pid": pid, "command": command[:240]}
+        if pid in ports_by_pid:
+            process["port"] = ports_by_pid[pid]
+        processes.append(process)
     return processes
 
+
+def _listening_ports_by_pid() -> dict[str, str]:
+    result = run_command(["ss", "-ltnp"], timeout=2.0)
+    if not result or result.returncode != 0:
+        return {}
+    ports: dict[str, str] = {}
+    pattern = re.compile(r"\S+:(?P<port>\d+)\s+.*pid=(?P<pid>\d+),")
+    for line in result.stdout.splitlines():
+        match = pattern.search(line)
+        if not match:
+            continue
+        port = match.group("port")
+        if port in {"22", "80", "443"}:
+            continue
+        ports.setdefault(match.group("pid"), port)
+    return ports
 
 def health_for_port(port: int) -> dict[str, Any]:
     url = f"http://127.0.0.1:{port}/health"

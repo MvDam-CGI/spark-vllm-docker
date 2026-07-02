@@ -922,6 +922,37 @@ copy_script_to_worker() {
          rm -f $remote_tmp" || { echo "Error: docker cp to worker $worker_ip failed"; exit 1; }
 }
 
+copy_launch_scripts_to_cluster() {
+    if [[ -z "$LAUNCH_SCRIPT_PATH" ]]; then
+        return
+    fi
+
+    local total_nodes=$(( 1 + ${#PEER_NODES[@]} ))
+    if [[ "$NO_RAY_MODE" == "true" ]]; then
+        local head_script; head_script=$(make_node_script "$LAUNCH_SCRIPT_PATH" "$total_nodes" "0" "$HEAD_IP")
+        copy_script_to_container "$CONTAINER_NAME" "$head_script" "head node ($HEAD_IP)"
+        rm -f "$head_script"
+
+        local rank=1
+        for worker in "${PEER_NODES[@]}"; do
+            local worker_script; worker_script=$(make_node_script "$LAUNCH_SCRIPT_PATH" "$total_nodes" "$rank" "$HEAD_IP")
+            copy_script_to_worker "$worker" "$CONTAINER_NAME" "$worker_script"
+            rm -f "$worker_script"
+            (( rank++ ))
+        done
+    else
+        local ray_script="$LAUNCH_SCRIPT_PATH"
+        local temp_ray_script=""
+        if [[ "$SOLO_MODE" == "false" ]]; then
+            ray_script=$(make_ray_script "$LAUNCH_SCRIPT_PATH")
+            if [[ "$ray_script" != "$LAUNCH_SCRIPT_PATH" ]]; then
+                temp_ray_script="$ray_script"
+            fi
+        fi
+        copy_script_to_container "$CONTAINER_NAME" "$ray_script" "head node"
+        [[ -n "$temp_ray_script" ]] && rm -f "$temp_ray_script"
+    fi
+}
 # Build -e KEY=VALUE flags for a given node IP (used in docker run and docker exec)
 get_env_flags() {
     local node_ip="$1"
@@ -967,6 +998,7 @@ start_cluster() {
     check_cluster_running
 
     if [[ "$CLUSTER_WAS_RUNNING" == "true" ]]; then
+        copy_launch_scripts_to_cluster
         return
     fi
 
@@ -1031,34 +1063,7 @@ start_cluster() {
     fi
 
     # Copy (and patch for no-ray) launch script
-    if [[ -n "$LAUNCH_SCRIPT_PATH" ]]; then
-        local total_nodes=$(( 1 + ${#PEER_NODES[@]} ))
-        if [[ "$NO_RAY_MODE" == "true" ]]; then
-            # Build per-node patched scripts on the host, then copy
-            local head_script; head_script=$(make_node_script "$LAUNCH_SCRIPT_PATH" "$total_nodes" "0" "$HEAD_IP")
-            copy_script_to_container "$CONTAINER_NAME" "$head_script" "head node ($HEAD_IP)"
-            rm -f "$head_script"
-
-            local rank=1
-            for worker in "${PEER_NODES[@]}"; do
-                local worker_script; worker_script=$(make_node_script "$LAUNCH_SCRIPT_PATH" "$total_nodes" "$rank" "$HEAD_IP")
-                copy_script_to_worker "$worker" "$CONTAINER_NAME" "$worker_script"
-                rm -f "$worker_script"
-                (( rank++ ))
-            done
-        else
-            local ray_script="$LAUNCH_SCRIPT_PATH"
-            local temp_ray_script=""
-            if [[ "$SOLO_MODE" == "false" ]]; then
-                ray_script=$(make_ray_script "$LAUNCH_SCRIPT_PATH")
-                if [[ "$ray_script" != "$LAUNCH_SCRIPT_PATH" ]]; then
-                    temp_ray_script="$ray_script"
-                fi
-            fi
-            copy_script_to_container "$CONTAINER_NAME" "$ray_script" "head node"
-            [[ -n "$temp_ray_script" ]] && rm -f "$temp_ray_script"
-        fi
-    fi
+    copy_launch_scripts_to_cluster
 
     # Start Ray cluster (unless solo or no-ray)
     if [[ "$SOLO_MODE" == "false" && "$NO_RAY_MODE" == "false" ]]; then

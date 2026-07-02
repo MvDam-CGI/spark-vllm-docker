@@ -385,12 +385,17 @@ def _command_arg(command: Any, flag: str) -> str | None:
 
 def _add_manual_process_runtimes(runtimes: list[dict[str, Any]]) -> None:
     known_pids = {str(runtime.get("processId")) for runtime in runtimes if runtime.get("processId")}
+    seen_manual = set()
     for process in process_runtimes():
         pid = str(process.get("pid", ""))
         command = str(process.get("command", ""))
         if not pid or pid in known_pids or not _is_manual_vllm_server_command(command):
             continue
-        identity = _manual_runtime_identity(command)
+        identity = _manual_runtime_identity(command, process.get("port"))
+        dedupe_key = (identity.get("recipeSlug"), identity["name"], identity.get("port") or "Unknown")
+        if dedupe_key in seen_manual:
+            continue
+        seen_manual.add(dedupe_key)
         runtimes.append(
             {
                 "id": f"manual-vllm-{pid}",
@@ -414,10 +419,10 @@ def _is_manual_vllm_server_command(command: str) -> bool:
     return "vllm serve" in lower or "vllm.entrypoints.openai.api_server" in lower
 
 
-def _manual_runtime_identity(command: str) -> dict[str, Any]:
+def _manual_runtime_identity(command: str, detected_port: Any = None) -> dict[str, Any]:
     args = _split_command(command)
     model = _manual_model_arg(args)
-    port = _manual_option_arg(args, "--port")
+    port = _manual_option_arg(args, "--port") or (str(detected_port) if detected_port else None)
     recipe = _recipe_for_model(model)
     if recipe:
         return {"name": recipe.name, "recipeSlug": recipe.slug, "port": port}
