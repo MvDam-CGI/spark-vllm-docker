@@ -7,6 +7,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import subprocess
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -389,13 +390,15 @@ def _add_manual_process_runtimes(runtimes: list[dict[str, Any]]) -> None:
         command = str(process.get("command", ""))
         if not pid or pid in known_pids or not _is_manual_vllm_server_command(command):
             continue
+        identity = _manual_runtime_identity(command)
         runtimes.append(
             {
                 "id": f"manual-vllm-{pid}",
-                "recipeName": "Manual vLLM process",
+                "recipeSlug": identity.get("recipeSlug"),
+                "recipeName": identity["name"],
                 "status": "Running",
                 "mode": "Manual",
-                "port": "Unknown",
+                "port": identity.get("port") or "Unknown",
                 "processId": pid,
                 "processCommand": command,
                 "health": {"healthy": False},
@@ -409,6 +412,52 @@ def _is_manual_vllm_server_command(command: str) -> bool:
     if any(token in lower for token in ("enginecore", "multiprocessing", "ray::", "pgrep")):
         return False
     return "vllm serve" in lower or "vllm.entrypoints.openai.api_server" in lower
+
+
+def _manual_runtime_identity(command: str) -> dict[str, Any]:
+    args = _split_command(command)
+    model = _manual_model_arg(args)
+    port = _manual_option_arg(args, "--port")
+    recipe = _recipe_for_model(model)
+    if recipe:
+        return {"name": recipe.name, "recipeSlug": recipe.slug, "port": port}
+    return {"name": _display_model_name(model) if model else "vLLM", "recipeSlug": None, "port": port}
+
+
+def _split_command(command: str) -> list[str]:
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
+
+
+def _manual_model_arg(args: list[str]) -> str | None:
+    for index, arg in enumerate(args[:-1]):
+        if arg == "serve" and index > 0 and args[index - 1].endswith("vllm"):
+            return args[index + 1]
+        if arg == "--model":
+            return args[index + 1]
+    return None
+
+
+def _manual_option_arg(args: list[str], flag: str) -> str | None:
+    for index, arg in enumerate(args[:-1]):
+        if arg == flag:
+            return args[index + 1]
+    return None
+
+
+def _recipe_for_model(model: str | None):
+    if not model:
+        return None
+    for recipe in recipe_map(PROJECT_DIR).values():
+        if recipe.model == model:
+            return recipe
+    return None
+
+
+def _display_model_name(model: str) -> str:
+    return model.rstrip("/").split("/")[-1] or model
 
 
 def _manual_runtime_pid(runtime_id: str) -> int | None:

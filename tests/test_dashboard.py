@@ -164,7 +164,7 @@ def test_current_runtimes_adds_only_manual_vllm_server_processes(monkeypatch):
         server,
         "process_runtimes",
         lambda: [
-            {"pid": "123", "command": "vllm serve test-model"},
+            {"pid": "123", "command": "vllm serve Infomaniak-AI/vllm-translategemma-4b-it --port 8005"},
             {"pid": "124", "command": "VLLM::EngineCore"},
             {"pid": "125", "command": "python -m multiprocessing.spawn vllm worker"},
         ],
@@ -175,12 +175,13 @@ def test_current_runtimes_adds_only_manual_vllm_server_processes(monkeypatch):
     assert runtimes == [
         {
             "id": "manual-vllm-123",
-            "recipeName": "Manual vLLM process",
+            "recipeSlug": "translategemma-4b-it",
+            "recipeName": "TranslateGemma-4B-IT",
             "status": "Running",
             "mode": "Manual",
-            "port": "Unknown",
+            "port": "8005",
             "processId": "123",
-            "processCommand": "vllm serve test-model",
+            "processCommand": "vllm serve Infomaniak-AI/vllm-translategemma-4b-it --port 8005",
             "health": {"healthy": False},
             "memoryBreakdown": {"modelMiB": None, "contextMiB": None},
         }
