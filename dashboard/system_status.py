@@ -162,9 +162,52 @@ def stop_vllm_process(pid: Any) -> bool:
         return False
     try:
         os.kill(pid_int, signal.SIGTERM)
+    except PermissionError:
+        return _stop_container_process(pid_int)
     except OSError:
         return False
     return True
+
+
+def _stop_container_process(host_pid: int) -> bool:
+    target = _container_process_target(host_pid)
+    if not target:
+        return False
+    container_id, container_pid = target
+    result = run_command(["docker", "exec", container_id, "kill", "-TERM", container_pid], timeout=5.0)
+    return bool(result and result.returncode == 0)
+
+
+def _container_process_target(host_pid: int) -> tuple[str, str] | None:
+    container_id = _container_id_for_pid(host_pid)
+    container_pid = _namespace_pid(host_pid)
+    if not container_id or not container_pid:
+        return None
+    return container_id, container_pid
+
+
+def _container_id_for_pid(host_pid: int) -> str | None:
+    cgroup = Path(f"/proc/{host_pid}/cgroup")
+    try:
+        text = cgroup.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = re.search(r"docker[-/]([0-9a-f]{64})", text)
+    return match.group(1) if match else None
+
+
+def _namespace_pid(host_pid: int) -> str | None:
+    status = Path(f"/proc/{host_pid}/status")
+    try:
+        lines = status.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if line.startswith("NSpid:"):
+            pids = line.split()[1:]
+            if len(pids) > 1:
+                return pids[-1]
+    return None
 
 
 def _is_stoppable_vllm_command(command: str) -> bool:
