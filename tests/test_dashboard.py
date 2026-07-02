@@ -156,11 +156,19 @@ def test_gpu_status_falls_back_to_process_table(monkeypatch):
     assert status["gpus"][0]["memorySource"] == "process-table"
     assert status["gpus"][0]["memoryTotalMiB"] == 131072
 
-def test_current_runtimes_adds_manual_vllm_process(monkeypatch):
+def test_current_runtimes_adds_only_manual_vllm_server_processes(monkeypatch):
     monkeypatch.setattr(server.REGISTRY, "list", lambda: [])
     monkeypatch.setattr(server, "docker_runtimes", lambda: [])
     monkeypatch.setattr(server, "gpu_status", lambda: {"gpus": []})
-    monkeypatch.setattr(server, "process_runtimes", lambda: [{"pid": "123", "command": "vllm serve test-model"}])
+    monkeypatch.setattr(
+        server,
+        "process_runtimes",
+        lambda: [
+            {"pid": "123", "command": "vllm serve test-model"},
+            {"pid": "124", "command": "VLLM::EngineCore"},
+            {"pid": "125", "command": "python -m multiprocessing.spawn vllm worker"},
+        ],
+    )
 
     runtimes = server.current_runtimes()
 

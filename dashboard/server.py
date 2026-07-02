@@ -386,7 +386,8 @@ def _add_manual_process_runtimes(runtimes: list[dict[str, Any]]) -> None:
     known_pids = {str(runtime.get("processId")) for runtime in runtimes if runtime.get("processId")}
     for process in process_runtimes():
         pid = str(process.get("pid", ""))
-        if not pid or pid in known_pids:
+        command = str(process.get("command", ""))
+        if not pid or pid in known_pids or not _is_manual_vllm_server_command(command):
             continue
         runtimes.append(
             {
@@ -396,11 +397,18 @@ def _add_manual_process_runtimes(runtimes: list[dict[str, Any]]) -> None:
                 "mode": "Manual",
                 "port": "Unknown",
                 "processId": pid,
-                "processCommand": process.get("command", ""),
+                "processCommand": command,
                 "health": {"healthy": False},
                 "memoryBreakdown": {"modelMiB": None, "contextMiB": None},
             }
         )
+
+
+def _is_manual_vllm_server_command(command: str) -> bool:
+    lower = command.lower()
+    if any(token in lower for token in ("enginecore", "multiprocessing", "ray::", "pgrep")):
+        return False
+    return "vllm serve" in lower or "vllm.entrypoints.openai.api_server" in lower
 
 
 def _manual_runtime_pid(runtime_id: str) -> int | None:
