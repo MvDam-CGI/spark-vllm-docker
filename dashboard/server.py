@@ -223,12 +223,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
 def current_runtimes() -> list[dict[str, Any]]:
     containers = {item["containerName"]: item for item in docker_runtimes()}
+    live_processes = process_runtimes()
+    live_process_pids = {str(process.get("pid")) for process in live_processes if process.get("pid")}
     runtimes = []
     gpu = gpu_status()
     for runtime in REGISTRY.list():
         item = dict(runtime)
         container = containers.get(str(item.get("containerName", "")))
-        process_running = _process_running(item.get("processId"))
+        process_id = str(item.get("processId")) if item.get("processId") else ""
+        process_running = bool(process_id and process_id in live_process_pids) or _process_running(item.get("processId"))
         port = int(item.get("port", 0) or 0)
         item["health"] = health_for_port(port) if port else {"healthy": False}
         item["gpuMemoryTargetPercent"] = _gpu_memory_target_percent(item)
@@ -236,11 +239,15 @@ def current_runtimes() -> list[dict[str, Any]]:
         owns_runtime = bool(container or process_running)
         if item["health"].get("healthy") and owns_runtime:
             item["status"] = "Ready"
+            if runtime.get("status") != "Ready" or runtime.get("stopRequestedAt") or runtime.get("stopReason"):
+                REGISTRY.upsert(_revived_runtime_record(runtime, "Ready"))
         elif container:
             item["status"] = "Starting" if "Up" in container.get("status", "") else "Needs Attention"
             item["container"] = container
         elif process_running:
             item["status"] = "Starting"
+            if runtime.get("status") != "Starting" or runtime.get("stopRequestedAt") or runtime.get("stopReason"):
+                REGISTRY.upsert(_revived_runtime_record(runtime, "Starting"))
         elif item.get("status") == "Dry Run":
             item["status"] = "Dry Run"
         elif manual_stop:
@@ -253,9 +260,18 @@ def current_runtimes() -> list[dict[str, Any]]:
         if _has_new_memory_values(item.get("memoryBreakdown"), runtime.get("memoryBreakdown")):
             REGISTRY.update_fields(str(item.get("id")), {"memoryBreakdown": item["memoryBreakdown"]})
         runtimes.append(item)
-    _add_manual_process_runtimes(runtimes)
+    _add_manual_process_runtimes(runtimes, live_processes)
     _assign_gpu_memory(runtimes, gpu)
     return runtimes
+
+
+def _revived_runtime_record(runtime: dict[str, Any], status: str) -> dict[str, Any]:
+    revived = dict(runtime)
+    revived["status"] = status
+    revived["updatedAt"] = utc_now()
+    revived.pop("stopRequestedAt", None)
+    revived.pop("stopReason", None)
+    return revived
 
 
 def runtime_logs(runtime: dict[str, Any], lines: int) -> str:
@@ -386,38 +402,41 @@ def _command_arg(command: Any, flag: str) -> str | None:
     return None
 
 
-def _add_manual_process_runtimes(runtimes: list[dict[str, Any]]) -> None:
+def _add_manual_process_runtimes(runtimes: list[dict[str, Any]], processes: list[dict[str, str]] | None = None) -> None:
     known_pids = {str(runtime.get("processId")) for runtime in runtimes if runtime.get("processId")}
-    known_identities = {_runtime_identity_key(runtime) for runtime in runtimes}
-    known_identities.discard(None)
     seen_manual = set()
-    for process in process_runtimes():
+    for process in processes if processes is not None else process_runtimes():
         pid = str(process.get("pid", ""))
         command = str(process.get("command", ""))
         if not pid or pid in known_pids or not _is_manual_vllm_server_command(command):
             continue
         identity = _manual_runtime_identity(command, process.get("port"))
-        identity_key = _runtime_identity_key(identity)
-        if identity_key in known_identities:
-            continue
         dedupe_key = (identity.get("recipeSlug"), identity["name"], identity.get("port") or "Unknown")
         if dedupe_key in seen_manual:
             continue
         seen_manual.add(dedupe_key)
-        runtimes.append(
-            {
-                "id": f"manual-vllm-{pid}",
-                "recipeSlug": identity.get("recipeSlug"),
-                "recipeName": identity["name"],
-                "status": "Running",
-                "mode": "Manual",
-                "port": identity.get("port") or "Unknown",
-                "processId": pid,
-                "processCommand": command,
-                "health": {"healthy": False},
-                "memoryBreakdown": {"modelMiB": None, "contextMiB": None},
-            }
-        )
+        runtime = _manual_process_runtime(process, identity)
+        REGISTRY.upsert(runtime)
+        runtimes.append(runtime)
+
+
+def _manual_process_runtime(process: dict[str, str], identity: dict[str, Any]) -> dict[str, Any]:
+    pid = str(process.get("pid", ""))
+    port = identity.get("port") or "Unknown"
+    return {
+        "id": f"manual-vllm-{pid}",
+        "recipeSlug": identity.get("recipeSlug"),
+        "recipeName": identity["name"],
+        "status": "Running",
+        "mode": "Manual",
+        "port": port,
+        "processId": pid,
+        "processCommand": str(process.get("command", "")),
+        "health": health_for_port(int(port)) if str(port).isdigit() else {"healthy": False},
+        "memoryBreakdown": {"modelMiB": None, "contextMiB": None},
+        "startedAt": utc_now(),
+        "updatedAt": utc_now(),
+    }
 
 
 def _runtime_identity_key(runtime: dict[str, Any]) -> tuple[str, str] | None:
