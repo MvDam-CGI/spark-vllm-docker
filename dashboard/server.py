@@ -225,10 +225,14 @@ def current_runtimes() -> list[dict[str, Any]]:
     containers = {item["containerName"]: item for item in docker_runtimes()}
     live_processes = process_runtimes()
     live_process_pids = {str(process.get("pid")) for process in live_processes if process.get("pid")}
+    registry_runtimes = REGISTRY.list()
+    dashboard_owned_ports = _dashboard_owned_ports(registry_runtimes, containers, live_process_pids)
     runtimes = []
     gpu = gpu_status()
-    for runtime in REGISTRY.list():
+    for runtime in registry_runtimes:
         item = dict(runtime)
+        if item.get("mode") == "Manual" and str(item.get("port")) in dashboard_owned_ports:
+            continue
         container = containers.get(str(item.get("containerName", "")))
         process_id = str(item.get("processId")) if item.get("processId") else ""
         process_running = bool(process_id and process_id in live_process_pids) or _process_running(item.get("processId"))
@@ -260,9 +264,26 @@ def current_runtimes() -> list[dict[str, Any]]:
         if _has_new_memory_values(item.get("memoryBreakdown"), runtime.get("memoryBreakdown")):
             REGISTRY.update_fields(str(item.get("id")), {"memoryBreakdown": item["memoryBreakdown"]})
         runtimes.append(item)
-    _add_manual_process_runtimes(runtimes, live_processes)
+    _add_manual_process_runtimes(runtimes, live_processes, dashboard_owned_ports)
     _assign_gpu_memory(runtimes, gpu)
     return runtimes
+
+
+def _dashboard_owned_ports(
+    runtimes: list[dict[str, Any]], containers: dict[str, dict[str, str]], live_process_pids: set[str]
+) -> set[str]:
+    ports = set()
+    for runtime in runtimes:
+        if runtime.get("mode") == "Manual":
+            continue
+        port = runtime.get("port")
+        if not port or str(port) == "Unknown":
+            continue
+        process_id = str(runtime.get("processId")) if runtime.get("processId") else ""
+        owns_runtime = str(runtime.get("containerName", "")) in containers or bool(process_id and process_id in live_process_pids)
+        if owns_runtime:
+            ports.add(str(port))
+    return ports
 
 
 def _revived_runtime_record(runtime: dict[str, Any], status: str) -> dict[str, Any]:
@@ -402,7 +423,9 @@ def _command_arg(command: Any, flag: str) -> str | None:
     return None
 
 
-def _add_manual_process_runtimes(runtimes: list[dict[str, Any]], processes: list[dict[str, str]] | None = None) -> None:
+def _add_manual_process_runtimes(
+    runtimes: list[dict[str, Any]], processes: list[dict[str, str]] | None = None, dashboard_owned_ports: set[str] | None = None
+) -> None:
     known_pids = {str(runtime.get("processId")) for runtime in runtimes if runtime.get("processId")}
     seen_manual = set()
     for process in processes if processes is not None else process_runtimes():
@@ -411,6 +434,9 @@ def _add_manual_process_runtimes(runtimes: list[dict[str, Any]], processes: list
         if not pid or pid in known_pids or not _is_manual_vllm_server_command(command):
             continue
         identity = _manual_runtime_identity(command, process.get("port"))
+        port = str(identity.get("port") or "Unknown")
+        if dashboard_owned_ports and port in dashboard_owned_ports:
+            continue
         dedupe_key = (identity.get("recipeSlug"), identity["name"], identity.get("port") or "Unknown")
         if dedupe_key in seen_manual:
             continue
