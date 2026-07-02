@@ -369,6 +369,41 @@ h2 {
   margin-bottom: 0.5rem;
 }
 
+.recipe-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.65rem;
+}
+
+.availability-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.18rem 0.6rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.availability-downloaded,
+.availability-local {
+  border-color: rgba(69, 212, 131, 0.7);
+  color: var(--green);
+}
+
+.availability-missing {
+  border-color: rgba(241, 184, 75, 0.72);
+  color: var(--amber);
+}
+
+.availability-running {
+  border-color: rgba(67, 214, 232, 0.72);
+  color: var(--cyan);
+}
+
 .runtime-card-compact {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

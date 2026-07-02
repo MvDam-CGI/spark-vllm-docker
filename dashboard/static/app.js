@@ -215,10 +215,12 @@ function renderRecipes() {
     if (filter === "solo") return !recipe.clusterOnly;
     if (filter === "cluster") return !recipe.soloOnly;
     if (filter === "running") return runningSlugs.has(recipe.slug);
+    if (filter === "cached") return recipe.modelAvailability?.downloaded === true;
+    if (filter === "needs-download") return recipe.modelAvailability?.downloaded === false;
     if (filter === "ready") return !runningSlugs.has(recipe.slug);
     return true;
   });
-  const nodes = recipes.length ? recipes.map(recipeCard) : [emptyState("No recipes match this view", "Try All, Solo, or Ready to Launch.")];
+  const nodes = recipes.length ? recipes.map(recipeCard) : [emptyState("No recipes match this view", "Try All, Model downloaded, or Not running.")];
   replaceChildren(byId("recipe-list"), nodes);
 }
 
@@ -235,6 +237,7 @@ function recipeCard(recipe) {
   const details = detailsElement(`recipe:${recipe.slug}`, "Recipe details");
   details.append(
     meta("Model ID", recipe.model || "Not specified"),
+    meta("Model cache", recipe.modelAvailability?.detail || "Availability check is unavailable."),
     meta("Container", recipe.container),
     meta("Default port", recipe.defaultPort),
     meta("GPU target", recipe.defaultGpuMemoryUtilization),
@@ -243,12 +246,26 @@ function recipeCard(recipe) {
   );
   card.append(
     el("h2", "", recipe.name),
+    el("div", "recipe-badges", availabilityBadge(recipe.modelAvailability), availabilityBadge(runningRecipeLabel(recipe.slug))),
     el("p", "muted", recipe.description || "No description provided."),
     meta("Support", recipe.support),
     details,
     launch,
   );
   return card;
+}
+
+function runningRecipeLabel(slug) {
+  const isRunning = state.runtimes.some((runtime) => ["Starting", "Running", "Ready"].includes(runtime.status) && runtime.recipeSlug === slug);
+  return isRunning
+    ? { status: "running", label: "Already running" }
+    : { status: "not-running", label: "Not running" };
+}
+
+function availabilityBadge(availability) {
+  const status = availability?.status || "unknown";
+  const label = availability?.label || "Availability unknown";
+  return el("span", `availability-badge availability-${status}`, label);
 }
 
 function renderRuntime() {

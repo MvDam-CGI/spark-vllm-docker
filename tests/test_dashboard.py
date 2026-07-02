@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 from subprocess import CompletedProcess
 
 import pytest
@@ -70,6 +71,32 @@ def test_build_launch_plan_creates_unique_runtime_ids_for_same_port():
 def test_project_name_trims_whitespace_and_length():
     assert server._project_name("  Demo   Run  ") == "Demo Run"
     assert len(server._project_name("x" * 100)) == 80
+
+def test_model_availability_detects_huggingface_snapshot(monkeypatch):
+    cache = PROJECT_DIR / "dashboard" / "state" / "test-hf-cache"
+    shutil.rmtree(cache, ignore_errors=True)
+    snapshot = cache / "hub" / "models--org--model" / "snapshots" / "abc123"
+    snapshot.mkdir(parents=True)
+    monkeypatch.setenv("HF_HOME", str(cache))
+
+    try:
+        availability = server.model_availability("org/model")
+    finally:
+        shutil.rmtree(cache, ignore_errors=True)
+
+    assert availability["downloaded"] is True
+    assert availability["status"] == "downloaded"
+
+
+def test_model_availability_reports_missing_huggingface_snapshot(monkeypatch):
+    cache = PROJECT_DIR / "dashboard" / "state" / "missing-hf-cache"
+    shutil.rmtree(cache, ignore_errors=True)
+    monkeypatch.setenv("HF_HOME", str(cache))
+
+    availability = server.model_availability("org/model")
+
+    assert availability["downloaded"] is False
+    assert availability["status"] == "missing"
 
 def test_build_launch_plan_includes_advanced_options():
     recipe = load_recipe(PROJECT_DIR / "recipes" / "glm-4.7-flash-awq.yaml")
@@ -201,20 +228,21 @@ def test_current_runtimes_adds_only_manual_vllm_server_processes(monkeypatch):
 
     runtimes = server.current_runtimes()
 
-    assert runtimes == [
-        {
-            "id": "manual-vllm-123",
-            "recipeSlug": "translategemma-4b-it",
-            "recipeName": "TranslateGemma-4B-IT",
-            "status": "Running",
-            "mode": "Manual",
-            "port": "8005",
-            "processId": "123",
-            "processCommand": "vllm serve Infomaniak-AI/vllm-translategemma-4b-it",
-            "health": {"healthy": False},
-            "memoryBreakdown": {"modelMiB": None, "contextMiB": None},
-        }
-    ]
+    assert len(runtimes) == 1
+    assert runtimes[0] | {"startedAt": None, "updatedAt": None} == {
+        "id": "manual-vllm-123",
+        "recipeSlug": "translategemma-4b-it",
+        "recipeName": "TranslateGemma-4B-IT",
+        "status": "Running",
+        "mode": "Manual",
+        "port": "8005",
+        "processId": "123",
+        "processCommand": "vllm serve Infomaniak-AI/vllm-translategemma-4b-it",
+        "health": {"url": "http://127.0.0.1:8005/health", "healthy": False, "status": None},
+        "memoryBreakdown": {"modelMiB": None, "contextMiB": None},
+        "startedAt": None,
+        "updatedAt": None,
+    }
 
 
 def test_process_runtimes_includes_listening_port(monkeypatch):

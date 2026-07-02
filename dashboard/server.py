@@ -95,7 +95,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def _handle_api_get(self, path: str, query: dict[str, list[str]]) -> None:
         if path == "/api/recipes":
-            self._json({"recipes": [recipe.to_api() for recipe in recipe_map(PROJECT_DIR).values()]})
+            self._json({"recipes": recipes_api(PROJECT_DIR)})
         elif path == "/api/runtimes":
             self._json({"runtimes": current_runtimes(), "containers": docker_runtimes(), "processes": process_runtimes()})
         elif path == "/api/gpu":
@@ -221,6 +221,56 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
 
+def recipes_api(project_dir: Path) -> list[dict[str, Any]]:
+    items = []
+    for recipe in recipe_map(project_dir).values():
+        item = recipe.to_api()
+        item["modelAvailability"] = model_availability(recipe.model)
+        items.append(item)
+    return items
+
+
+def model_availability(model: str | None) -> dict[str, Any]:
+    if not model:
+        return {
+            "status": "unknown",
+            "downloaded": None,
+            "label": "No model id",
+            "detail": "This recipe does not declare a Hugging Face model to check.",
+        }
+    local_path = Path(model).expanduser()
+    if local_path.exists():
+        return {"status": "local", "downloaded": True, "label": "Local path found", "detail": str(local_path)}
+    cache_path = _cached_huggingface_model_path(model)
+    if cache_path:
+        return {"status": "downloaded", "downloaded": True, "label": "Model cached", "detail": str(cache_path)}
+    return {
+        "status": "missing",
+        "downloaded": False,
+        "label": "Download required",
+        "detail": "No local Hugging Face snapshot was detected for this model.",
+    }
+
+
+def _cached_huggingface_model_path(model: str) -> Path | None:
+    cache_name = "models--" + model.strip("/").replace("/", "--")
+    for hub_dir in _huggingface_hub_dirs():
+        model_dir = hub_dir / cache_name
+        snapshots = model_dir / "snapshots"
+        if snapshots.is_dir() and any(snapshots.iterdir()):
+            return model_dir
+    return None
+
+
+def _huggingface_hub_dirs() -> list[Path]:
+    candidates = []
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home:
+        candidates.append(Path(hf_home).expanduser() / "hub")
+    candidates.append(Path.home() / ".cache" / "huggingface" / "hub")
+    return list(dict.fromkeys(candidates))
+
+
 def current_runtimes() -> list[dict[str, Any]]:
     containers = {item["containerName"]: item for item in docker_runtimes()}
     live_processes = process_runtimes()
@@ -280,7 +330,11 @@ def _dashboard_owned_ports(
         if not port or str(port) == "Unknown":
             continue
         process_id = str(runtime.get("processId")) if runtime.get("processId") else ""
-        owns_runtime = str(runtime.get("containerName", "")) in containers or bool(process_id and process_id in live_process_pids)
+        owns_runtime = (
+            str(runtime.get("containerName", "")) in containers
+            or bool(process_id and process_id in live_process_pids)
+            or _process_running(runtime.get("processId"))
+        )
         if owns_runtime:
             ports.add(str(port))
     return ports
