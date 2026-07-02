@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import re
 import shlex
+import secrets
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -86,8 +88,8 @@ def build_launch_plan(project_dir: Path, recipe: Recipe, payload: dict[str, Any]
     if mode == "cluster" and publish_ports:
         raise ValueError("Published ports are only supported in Solo mode.")
 
-    runtime_id = f"{recipe.slug}-{port}"
-    container_name = f"vllm-{recipe.slug}-{port}"
+    runtime_id = _runtime_id(recipe.slug, port)
+    container_name = f"vllm-{runtime_id}"
     script = project_dir / "run-recipe.sh"
     command = [
         str(script),
@@ -162,6 +164,11 @@ def build_launch_plan(project_dir: Path, recipe: Recipe, payload: dict[str, Any]
         command.extend(extra_vllm_args)
 
     return LaunchPlan(command, runtime_id, container_name, port, mode, host)
+
+
+def _runtime_id(recipe_slug: str, port: int) -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{recipe_slug}-{port}-{timestamp}-{secrets.token_hex(3)}"
 
 
 def _int_in_range(value: Any, minimum: int, maximum: int, label: str) -> int:

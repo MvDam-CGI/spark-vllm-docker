@@ -158,13 +158,18 @@ def stop_vllm_process(pid: Any) -> bool:
         return False
     result = run_command(["ps", "-p", str(pid_int), "-o", "args="])
     command = (result.stdout or "").strip() if result and result.returncode == 0 else ""
-    if "vllm" not in command.lower():
+    if not _is_stoppable_vllm_command(command):
         return False
     try:
         os.kill(pid_int, signal.SIGTERM)
     except OSError:
         return False
     return True
+
+
+def _is_stoppable_vllm_command(command: str) -> bool:
+    lower = command.lower()
+    return "vllm" in lower or "run-recipe.sh" in lower or "launch-cluster.sh" in lower
 
 
 def _gpu_status_from_full_smi() -> dict[str, Any] | None:

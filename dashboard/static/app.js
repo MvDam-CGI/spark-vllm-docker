@@ -121,6 +121,7 @@ function renderAll() {
 
 function renderOverview() {
   const active = activeRuntimes();
+  setText("running-title", state.system?.host ? `Models on ${state.system.host}` : "Models on this Spark");
   setText("running-count-badge", active.length ? `${active.length} active` : "Nothing running");
   renderOverviewRuntimes();
   renderCapacityPanel();
@@ -196,7 +197,7 @@ function recentEvents() {
   }
   return state.runtimes.slice(-6).reverse().map((runtime) => {
     const item = el("li", "event-item");
-    item.append(statusPill(runtime.status), textNode(` ${runtime.recipeName} on port ${runtime.port}`));
+    item.append(statusPill(runtime.status), textNode(` ${runtimeDisplayName(runtime)} on port ${runtime.port}`));
     return item;
   });
 }
@@ -273,13 +274,14 @@ function runtimeCard(runtime, options = {}) {
   const details = detailsElement(`runtime:${runtime.id}`, "More runtime details");
   details.append(
     meta("Runtime name", runtime.id),
+    meta("Project", runtime.projectName || (runtime.mode === "Manual" ? "Manual" : "None")),
     meta("API base URL", `http://127.0.0.1:${runtime.port}/v1`),
     meta("Container name", runtime.containerName || "Unknown"),
     meta("Last health check", runtime.health?.healthy ? "Ready" : "Not ready yet"),
     runtimeMemoryPanel(runtime),
   );
   card.append(
-    el("h2", "", runtime.recipeName),
+    el("h2", "", runtimeDisplayName(runtime)),
     statusPill(runtime.status),
     meta("Port", runtime.port),
     meta("Mode", runtime.mode || "Unknown"),
@@ -324,7 +326,7 @@ function updateCommandPreview() {
   if (payload.maxNumBatchedTokens) args.push("--max-num-batched-tokens", payload.maxNumBatchedTokens);
   if (payload.maxNumSeqs) args.push("--max-num-seqs", payload.maxNumSeqs);
   args.push("--tp", payload.tensorParallel || "1");
-  args.push("--name", `vllm-${payload.recipeSlug}-${payload.port || "port"}`);
+  args.push("--name", `vllm-${payload.recipeSlug}-${payload.port || "port"}-<run-id>`);
   if (payload.containerOverride) args.push("--container", payload.containerOverride);
   args.push(payload.mode === "solo" ? "--solo" : "--no-ray");
   if (payload.nodes) args.push("--nodes", payload.nodes);
@@ -419,16 +421,64 @@ async function stopRuntime(runtimeId) {
 function renderLogsOptions() {
   const select = byId("logs-runtime");
   const selected = select.value;
-  replaceChildren(select, state.runtimes.map((runtime) => option(runtime.id, `${runtime.recipeName} : ${runtime.port}`)));
+  replaceChildren(select, state.runtimes.map((runtime) => option(runtime.id, runtimeDisplayName(runtime))));
   select.value = state.runtimes.some((runtime) => runtime.id === selected) ? selected : state.runtimes[0]?.id || "";
+  renderLogRuntimeGroups();
   if (!state.runtimes.length) {
+    setText("logs-current-runtime", "No runtime selected.");
     setText("raw-logs", "No runtime logs yet. Launch a runtime or dry run first.");
   }
+}
+
+function renderLogRuntimeGroups() {
+  const selected = byId("logs-runtime").value;
+  const active = activeRuntimes();
+  const history = state.runtimes.filter((runtime) => !["Starting", "Running", "Ready"].includes(runtime.status));
+  const groups = [
+    logRuntimeSection("Running now", active, selected),
+    logRuntimeSection("History", history, selected),
+  ];
+  replaceChildren(byId("logs-runtime-groups"), groups);
+}
+
+function logRuntimeSection(title, runtimes, selected) {
+  const section = el("section", "log-runtime-section");
+  section.append(el("h2", "", title));
+  if (!runtimes.length) {
+    section.append(emptyState(title === "Running now" ? "No active runtime logs" : "No historical runtime logs", "Runs will appear here as soon as the dashboard has metadata for them."));
+    return section;
+  }
+  const grid = el("div", "log-runtime-grid");
+  runtimes.forEach((runtime) => grid.append(logRuntimeButton(runtime, selected)));
+  section.append(grid);
+  return section;
+}
+
+function logRuntimeButton(runtime, selected) {
+  const button = el("button", "log-runtime-button");
+  button.type = "button";
+  button.classList.toggle("is-selected", runtime.id === selected);
+  button.addEventListener("click", () => {
+    byId("logs-runtime").value = runtime.id;
+    refreshLogs();
+    renderLogRuntimeGroups();
+  });
+  button.append(
+    statusPill(runtime.status),
+    el("strong", "", runtimeDisplayName(runtime)),
+    el("span", "muted", `Port ${runtime.port} · ${formatStartedAt(runtime.startedAt)}`),
+    el("code", "", shortRuntimeId(runtime.id)),
+  );
+  return button;
 }
 
 async function refreshLogs() {
   const runtimeId = byId("logs-runtime").value;
   if (!runtimeId) return;
+  const runtime = state.runtimes.find((item) => item.id === runtimeId);
+  if (runtime) {
+    setText("logs-current-runtime", `${runtimeDisplayName(runtime)} is ${runtime.status} on port ${runtime.port}. Run ${shortRuntimeId(runtime.id)}.`);
+  }
   const result = await apiGet(`/api/logs/${runtimeId}?lines=300`);
   setText("raw-logs", result.logs || "No log output returned.");
   replaceChildren(byId("critical-log-events"), (result.events || []).map((event) => el("p", "event-item", `${event.status}: ${event.message}`)));
@@ -445,6 +495,7 @@ function launchPayload() {
   const data = new FormData(byId("launch-form"));
   return {
     recipeSlug: data.get("recipeSlug"),
+    projectName: data.get("projectName"),
     mode: data.get("mode"),
     port: Number(data.get("port")),
     host: data.get("host"),
@@ -531,6 +582,23 @@ function hasRecipe(slug) {
 function statusPill(status) {
   const text = status || "Stopped";
   return el("span", `status status-${text.toLowerCase().replaceAll(" ", "-")}`, text);
+}
+
+function runtimeDisplayName(runtime) {
+  const prefix = runtime.projectName || (runtime.mode === "Manual" ? "Manual" : "");
+  return prefix ? `${prefix} - ${runtime.recipeName}` : runtime.recipeName;
+}
+
+function shortRuntimeId(runtimeId) {
+  const text = String(runtimeId || "");
+  return text.length > 20 ? text.slice(-20) : text;
+}
+
+function formatStartedAt(startedAt) {
+  if (!startedAt) return "manual process";
+  const date = new Date(startedAt);
+  if (Number.isNaN(date.getTime())) return "time unknown";
+  return date.toLocaleString([], { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 function runtimeGpuSummary(runtime) {

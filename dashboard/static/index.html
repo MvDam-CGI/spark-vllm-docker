@@ -86,6 +86,7 @@
           <section class="launch-form" aria-labelledby="launch-settings-title">
             <h2 id="launch-settings-title">Start a model from a recipe</h2>
             <label>Recipe<select id="launch-recipe" name="recipeSlug" required></select></label>
+            <label>Project name<input id="launch-project-name" name="projectName" autocomplete="off" maxlength="80" placeholder="Demo, benchmark, customer name"></label>
             <fieldset>
               <legend>Mode</legend>
               <label><input type="radio" name="mode" value="solo" checked> Solo</label>
@@ -200,11 +201,13 @@
           <h1 id="logs-title">Logs</h1>
           <p class="page-intro">Inspect clean events and raw logs for dashboard-launched runtimes.</p>
         </div>
+        <div id="logs-runtime-groups" class="log-runtime-groups" aria-label="Runtime log groups"></div>
         <div class="toolbar">
-          <label>Runtime<select id="logs-runtime"></select></label>
+          <label>Selected runtime<select id="logs-runtime"></select></label>
           <button id="refresh-logs" type="button">Refresh</button>
           <button id="copy-logs" type="button">Copy logs</button>
         </div>
+        <div id="logs-current-runtime" class="log-current-runtime" aria-live="polite"></div>
         <div id="critical-log-events" class="event-list" aria-live="polite"></div>
         <pre id="raw-logs" class="log-view" tabindex="0"></pre>
       </section>

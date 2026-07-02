@@ -130,6 +130,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 "id": plan.runtime_id,
                 "recipeSlug": recipe.slug,
                 "recipeName": recipe.name,
+                "projectName": _project_name(payload.get("projectName")),
                 "command": plan.command,
                 "port": plan.port,
                 "host": plan.host,
@@ -232,7 +233,8 @@ def current_runtimes() -> list[dict[str, Any]]:
         item["health"] = health_for_port(port) if port else {"healthy": False}
         item["gpuMemoryTargetPercent"] = _gpu_memory_target_percent(item)
         manual_stop = item.get("status") == "Manually Stopped" or bool(item.get("stopRequestedAt"))
-        if item["health"].get("healthy"):
+        owns_runtime = bool(container or process_running)
+        if item["health"].get("healthy") and owns_runtime:
             item["status"] = "Ready"
         elif container:
             item["status"] = "Starting" if "Up" in container.get("status", "") else "Needs Attention"
@@ -498,6 +500,10 @@ def settings_status() -> dict[str, Any]:
         "authenticationToken": "Configured",
         "healthCheckTimeoutSeconds": 1.5,
     }
+
+
+def _project_name(value: Any) -> str:
+    return " ".join(str(value or "").split())[:80]
 
 
 def _tail_file(path: Path, lines: int) -> str:

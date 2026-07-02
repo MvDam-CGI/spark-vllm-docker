@@ -41,7 +41,35 @@ def test_build_launch_plan_uses_argument_array():
     assert "--solo" in plan.command
     assert "--dry-run" in plan.command
     assert "8001" in plan.command
-    assert plan.container_name == "vllm-translategemma-4b-it-8001"
+    assert plan.runtime_id.startswith("translategemma-4b-it-8001-")
+    assert plan.runtime_id != "translategemma-4b-it-8001"
+    assert plan.container_name == f"vllm-{plan.runtime_id}"
+
+
+def test_build_launch_plan_creates_unique_runtime_ids_for_same_port():
+    recipe = load_recipe(PROJECT_DIR / "recipes" / "translategemma-4b-it.yaml")
+    payload = {
+        "mode": "solo",
+        "port": 8001,
+        "host": "0.0.0.0",
+        "gpuMemoryUtilization": 0.7,
+        "maxModelLen": 2048,
+        "tensorParallel": 1,
+        "dryRun": True,
+    }
+
+    first = build_launch_plan(PROJECT_DIR, recipe, payload)
+    second = build_launch_plan(PROJECT_DIR, recipe, payload)
+
+    assert first.runtime_id != second.runtime_id
+    assert first.container_name != second.container_name
+    assert first.container_name == f"vllm-{first.runtime_id}"
+    assert second.container_name == f"vllm-{second.runtime_id}"
+
+
+def test_project_name_trims_whitespace_and_length():
+    assert server._project_name("  Demo   Run  ") == "Demo Run"
+    assert len(server._project_name("x" * 100)) == 80
 
 def test_build_launch_plan_includes_advanced_options():
     recipe = load_recipe(PROJECT_DIR / "recipes" / "glm-4.7-flash-awq.yaml")
@@ -287,11 +315,42 @@ def test_stop_vllm_process_sends_sigterm_to_vllm_command(monkeypatch):
     assert system_status_helpers.stop_vllm_process("123") is True
     assert killed == [(123, system_status_helpers.signal.SIGTERM)]
 
+
+def test_stop_vllm_process_sends_sigterm_to_dashboard_launch_wrapper(monkeypatch):
+    killed = []
+
+    monkeypatch.setattr(
+        system_status_helpers,
+        "run_command",
+        lambda args, timeout=2.0: CompletedProcess(args, 0, "bash ./run-recipe.sh translategemma-4b-it --port 8003\n", ""),
+    )
+    monkeypatch.setattr(system_status_helpers.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+
+    assert system_status_helpers.stop_vllm_process("123") is True
+    assert killed == [(123, system_status_helpers.signal.SIGTERM)]
+
 def test_current_runtimes_marks_registry_only_runtime_exited(monkeypatch):
     monkeypatch.setattr(server.REGISTRY, "list", lambda: [{"id": "old", "port": 8001, "status": "Starting"}])
     monkeypatch.setattr(server, "docker_runtimes", lambda: [])
     monkeypatch.setattr(server, "_process_running", lambda pid: False)
     monkeypatch.setattr(server, "health_for_port", lambda port: {"healthy": False})
+    monkeypatch.setattr(server, "gpu_status", lambda: {"gpus": []})
+    monkeypatch.setattr(server, "docker_logs", lambda container_name, lines: "")
+
+    runtimes = server.current_runtimes()
+
+    assert runtimes[0]["status"] == "Exited"
+
+
+def test_current_runtimes_does_not_mark_stale_runtime_ready_from_reused_port(monkeypatch):
+    monkeypatch.setattr(
+        server.REGISTRY,
+        "list",
+        lambda: [{"id": "old-translategemma", "port": 8003, "status": "Starting", "processId": "123"}],
+    )
+    monkeypatch.setattr(server, "docker_runtimes", lambda: [])
+    monkeypatch.setattr(server, "_process_running", lambda pid: False)
+    monkeypatch.setattr(server, "health_for_port", lambda port: {"healthy": True})
     monkeypatch.setattr(server, "gpu_status", lambda: {"gpus": []})
     monkeypatch.setattr(server, "docker_logs", lambda container_name, lines: "")
 

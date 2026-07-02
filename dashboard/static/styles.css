@@ -661,6 +661,60 @@ pre {
 .log-view {
   min-height: 24rem;
 }
+
+.log-runtime-groups {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  margin-bottom: 1rem;
+}
+
+.log-runtime-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(16, 26, 32, 0.74);
+  padding: 1rem;
+}
+
+.log-runtime-section h2 {
+  margin-bottom: 0.75rem;
+}
+
+.log-runtime-grid {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.log-runtime-button {
+  display: grid;
+  gap: 0.35rem;
+  width: 100%;
+  min-height: auto;
+  padding: 0.75rem;
+  text-align: left;
+}
+
+.log-runtime-button.is-selected {
+  border-color: var(--cgi-red);
+  box-shadow: inset 3px 0 0 var(--cgi-red);
+}
+
+.log-runtime-button .status {
+  margin-bottom: 0;
+}
+
+.log-runtime-button code {
+  color: var(--cyan);
+}
+
+.log-current-runtime {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  background: rgba(12, 20, 25, 0.78);
+  padding: 0.75rem;
+  color: var(--muted);
+}
 meter.is-unknown {
   opacity: 0.35;
 }
