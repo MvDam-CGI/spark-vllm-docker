@@ -43,7 +43,7 @@ function showRoute() {
   document.querySelectorAll("[data-page-link]").forEach((link) => {
     link.toggleAttribute("aria-current", link.dataset.pageLink === page);
   });
-  document.title = page[0].toUpperCase() + page.slice(1);
+  document.title = page === "runtime" ? "Monitoring" : page[0].toUpperCase() + page.slice(1);
 }
 
 function bindForms() {
@@ -269,8 +269,21 @@ function availabilityBadge(availability) {
 }
 
 function renderRuntime() {
+  renderMonitoringSummary();
   const nodes = state.runtimes.length ? state.runtimes.map((runtime) => runtimeCard(runtime)) : [emptyState("No runtime selected", "Dashboard-launched runtimes will appear here with health, port, and log actions.")];
   replaceChildren(byId("runtime-list"), nodes);
+}
+
+function renderMonitoringSummary() {
+  const withMetrics = state.runtimes.filter((runtime) => runtime.tokenMetrics);
+  const generatedToday = sumGeneratedTokens(withMetrics.filter((runtime) => isToday(runtime.startedAt)));
+  const generatedTotal = sumGeneratedTokens(withMetrics);
+  const peakOutput = Math.max(0, ...withMetrics.map((runtime) => runtime.tokenMetrics?.peakGeneratedTokensPerSecond).filter((value) => typeof value === "number"));
+  replaceChildren(byId("monitoring-summary"), [
+    metricTile("Generated today", tokenMetricValue(generatedToday), "dashboard runtime history"),
+    metricTile("Generated total", tokenMetricValue(generatedTotal), "stored runtime totals"),
+    metricTile("Peak output", peakOutput ? `${peakOutput.toFixed(1)} tok/s` : "Not available", "observed aggregate rate"),
+  ]);
 }
 
 function runtimeCard(runtime, options = {}) {
@@ -287,6 +300,14 @@ function runtimeCard(runtime, options = {}) {
     byId("logs-runtime").value = runtime.id;
     refreshLogs();
   });
+  if (options.compact) {
+    const monitor = el("button", "secondary-button", "Monitor");
+    monitor.type = "button";
+    monitor.addEventListener("click", () => {
+      location.hash = "runtime";
+    });
+    actions.append(monitor);
+  }
   actions.append(logs, stop);
   const details = detailsElement(`runtime:${runtime.id}`, "More runtime details");
   details.append(
@@ -303,6 +324,7 @@ function runtimeCard(runtime, options = {}) {
     meta("Port", runtime.port),
     meta("Mode", runtime.mode || "Unknown"),
     runtimeGpuSummary(runtime),
+    options.compact ? runtimeTokenSummary(runtime) : runtimeTokenPanel(runtime),
     details,
     actions,
   );
@@ -651,6 +673,92 @@ function runtimeMemoryPanel(runtime) {
     memoryLine("Context / KV cache", memoryValue(runtime.memoryBreakdown?.contextMiB), runtime.memoryBreakdown?.contextMiB),
   );
   return panel;
+}
+
+function runtimeTokenSummary(runtime) {
+  const metrics = runtime.tokenMetrics || {};
+  const summary = el("p", "runtime-token-summary muted");
+  const generated = metrics.generationTokensTotal;
+  const lastActiveRate = metrics.lastActiveGeneratedTokensPerSecond;
+  if (typeof generated !== "number" && typeof lastActiveRate !== "number") {
+    summary.textContent = "Token metrics waiting for vLLM telemetry";
+    return summary;
+  }
+  const parts = [];
+  if (typeof generated === "number") parts.push(`${formatCount(generated)} generated tokens`);
+  if (typeof lastActiveRate === "number") parts.push(`${lastActiveRate} agg tok/s`);
+  summary.textContent = parts.join(" · ");
+  return summary;
+}
+
+function runtimeTokenPanel(runtime) {
+  const metrics = runtime.tokenMetrics || {};
+  const panel = el("div", "runtime-token-panel");
+  panel.append(
+    metricTile("Generated", tokenMetricValue(metrics.generationTokensTotal), tokenSourceLabel(metrics.source)),
+    metricTile("Prompt", tokenMetricValue(metrics.promptTokensTotal), "input tokens"),
+    metricTile("Total", tokenMetricValue(metrics.tokensTotal), "prompt plus generated"),
+    metricTile("Requests", tokenMetricValue(metrics.requestCount), "completed by vLLM"),
+    metricTile("Current output", tokensPerSecondValue(metrics.currentGeneratedTokensPerSecond), "latest dashboard sample"),
+    metricTile("Last active output", tokensPerSecondValue(metrics.lastActiveGeneratedTokensPerSecond), "latest positive sample"),
+    metricTile("Peak output", tokensPerSecondValue(metrics.peakGeneratedTokensPerSecond), "highest observed sample"),
+    metricTile("TPOT", millisecondsValue(metrics.timePerOutputTokenMs), "avg time per output token"),
+    metricTile("E2E latency", secondsValue(metrics.endToEndLatencySeconds), "avg per request"),
+    metricTile("KV cache", percentValue(metrics.kvCacheUsagePercent), "current usage"),
+    metricTile("Prefix hits", percentValue(metrics.prefixCacheHitPercent), "cached prompt tokens"),
+  );
+  return panel;
+}
+
+function metricTile(label, value, detail) {
+  const tile = el("div", "metric-tile");
+  tile.append(el("span", "metric-label", label), el("strong", "", value), el("p", "muted", detail));
+  return tile;
+}
+
+function tokenMetricValue(value) {
+  return typeof value === "number" ? formatCount(value) : "Not available";
+}
+
+function tokensPerSecondValue(value) {
+  return typeof value === "number" ? `${value} tok/s` : "Not available";
+}
+
+function millisecondsValue(value) {
+  return typeof value === "number" ? `${value} ms` : "Not available";
+}
+
+function secondsValue(value) {
+  return typeof value === "number" ? `${value} s` : "Not available";
+}
+
+function percentValue(value) {
+  return typeof value === "number" ? `${value}%` : "Not available";
+}
+
+function sumGeneratedTokens(runtimes) {
+  return runtimes.reduce((total, runtime) => {
+    const value = runtime.tokenMetrics?.generationTokensTotal;
+    return total + (typeof value === "number" ? value : 0);
+  }, 0);
+}
+
+function isToday(value) {
+  if (!value) return false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  const now = new Date();
+  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+}
+
+function tokenSourceLabel(source) {
+  if (source === "prometheus") return "exact vLLM counter";
+  return "waiting for metrics";
+}
+
+function formatCount(value) {
+  if (typeof value !== "number") return "Not available";
+  return Math.round(value).toLocaleString();
 }
 
 function observedGpuValue(runtime) {

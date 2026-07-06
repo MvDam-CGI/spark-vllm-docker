@@ -5,6 +5,7 @@ from subprocess import CompletedProcess
 import pytest
 
 from dashboard import server
+from dashboard import metrics as dashboard_metrics
 from dashboard import system_status as system_status_helpers
 
 from dashboard.commands import build_launch_plan
@@ -441,7 +442,7 @@ def test_merge_memory_breakdown_keeps_values_when_tail_omits_them():
     stored = {"modelMiB": 7680, "contextMiB": 28928}
     parsed = {"modelMiB": None, "contextMiB": None}
 
-    assert server.merge_memory_breakdown(stored, parsed) == stored
+    assert dashboard_metrics.merge_memory_breakdown(stored, parsed) == stored
 
 def test_current_runtimes_persists_new_memory_breakdown(monkeypatch):
     updates = []
@@ -464,7 +465,89 @@ def test_current_runtimes_persists_new_memory_breakdown(monkeypatch):
 def test_parse_memory_breakdown_handles_vllm_gb_lines():
     logs = "Model loading took 8.2 GiB memory\nGPU KV cache size: 28.25GiB\n"
 
-    breakdown = server.parse_memory_breakdown(logs)
+    breakdown = dashboard_metrics.parse_memory_breakdown(logs)
 
     assert breakdown["modelMiB"] == 8396.8
     assert breakdown["contextMiB"] == 28928
+
+
+def test_parse_prometheus_token_metrics_sums_labeled_vllm_counters():
+    text = """
+# HELP vllm:prompt_tokens_total Number of prefill tokens processed.
+vllm:prompt_tokens_total{model_name="one"} 100
+vllm:prompt_tokens_total{model_name="two"} 25
+vllm:generation_tokens_total{model_name="one"} 300
+vllm:generation_tokens_total{model_name="two"} 75
+vllm:request_success_total{finished_reason="stop",model_name="one"} 3
+vllm:request_success_total{finished_reason="stop",model_name="two"} 2
+vllm:request_time_per_output_token_seconds_sum{model_name="one"} 1.5
+vllm:request_time_per_output_token_seconds_sum{model_name="two"} 0.5
+vllm:request_time_per_output_token_seconds_count{model_name="one"} 3
+vllm:request_time_per_output_token_seconds_count{model_name="two"} 2
+vllm:e2e_request_latency_seconds_sum{model_name="one"} 12
+vllm:e2e_request_latency_seconds_count{model_name="one"} 3
+vllm:kv_cache_usage_perc{model_name="one"} 0.25
+vllm:prefix_cache_queries_total{model_name="one"} 100
+vllm:prefix_cache_hits_total{model_name="one"} 60
+"""
+
+    metrics = dashboard_metrics.parse_prometheus_token_metrics(text)
+
+    assert metrics == {
+        "source": "prometheus",
+        "promptTokensTotal": 125,
+        "generationTokensTotal": 375,
+        "tokensTotal": 500,
+        "requestCount": 5,
+        "timePerOutputTokenMs": 400.0,
+        "interTokenLatencyMs": None,
+        "endToEndLatencySeconds": 4.0,
+        "kvCacheUsagePercent": 25.0,
+        "prefixCacheHitPercent": 60.0,
+    }
+
+
+def test_merge_token_metrics_calculates_observed_generation_rate():
+    stored = {
+        "source": "prometheus",
+        "sampledAt": "2026-07-03T15:19:54+00:00",
+        "generationTokensTotal": 0,
+        "lastActiveGeneratedTokensPerSecond": None,
+        "peakGeneratedTokensPerSecond": None,
+    }
+    current = {
+        "source": "prometheus",
+        "sampledAt": "2026-07-03T15:20:04+00:00",
+        "promptTokensTotal": 5757,
+        "generationTokensTotal": 6279,
+        "tokensTotal": 12036,
+    }
+
+    metrics = dashboard_metrics.merge_token_metrics(stored, current)
+
+    assert metrics["currentGeneratedTokensPerSecond"] == 627.9
+    assert metrics["lastActiveGeneratedTokensPerSecond"] == 627.9
+    assert metrics["peakGeneratedTokensPerSecond"] == 627.9
+
+
+def test_merge_token_metrics_keeps_last_active_rate_when_idle():
+    stored = {
+        "source": "prometheus",
+        "sampledAt": "2026-07-03T15:20:04+00:00",
+        "generationTokensTotal": 6279,
+        "lastActiveGeneratedTokensPerSecond": 627.9,
+        "peakGeneratedTokensPerSecond": 627.9,
+    }
+    current = {
+        "source": "prometheus",
+        "sampledAt": "2026-07-03T15:20:14+00:00",
+        "promptTokensTotal": 5757,
+        "generationTokensTotal": 6279,
+        "tokensTotal": 12036,
+    }
+
+    metrics = dashboard_metrics.merge_token_metrics(stored, current)
+
+    assert metrics["currentGeneratedTokensPerSecond"] == 0
+    assert metrics["lastActiveGeneratedTokensPerSecond"] == 627.9
+    assert metrics["peakGeneratedTokensPerSecond"] == 627.9

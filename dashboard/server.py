@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import secrets
 import shlex
 import subprocess
@@ -16,6 +15,15 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .commands import build_launch_plan
+from .metrics import (
+    has_new_memory_values,
+    has_new_token_metrics,
+    merge_memory_breakdown,
+    merge_token_metrics,
+    parse_memory_breakdown,
+    runtime_token_metrics,
+    strip_ansi,
+)
 from .recipes import recipe_map
 from .runtime_state import RuntimeRegistry, utc_now
 from .system_status import (
@@ -311,8 +319,14 @@ def current_runtimes() -> list[dict[str, Any]]:
         logs = runtime_logs(item, 80)
         parsed_memory = parse_memory_breakdown(logs)
         item["memoryBreakdown"] = merge_memory_breakdown(item.get("memoryBreakdown"), parsed_memory)
-        if _has_new_memory_values(item.get("memoryBreakdown"), runtime.get("memoryBreakdown")):
-            REGISTRY.update_fields(str(item.get("id")), {"memoryBreakdown": item["memoryBreakdown"]})
+        item["tokenMetrics"] = merge_token_metrics(runtime.get("tokenMetrics"), runtime_token_metrics(item))
+        updates = {}
+        if has_new_memory_values(item.get("memoryBreakdown"), runtime.get("memoryBreakdown")):
+            updates["memoryBreakdown"] = item["memoryBreakdown"]
+        if has_new_token_metrics(item.get("tokenMetrics"), runtime.get("tokenMetrics")):
+            updates["tokenMetrics"] = item["tokenMetrics"]
+        if updates:
+            REGISTRY.update_fields(str(item.get("id")), updates)
         runtimes.append(item)
     _add_manual_process_runtimes(runtimes, live_processes, dashboard_owned_ports)
     _assign_gpu_memory(runtimes, gpu)
@@ -391,45 +405,6 @@ def clean_events(logs: str) -> list[dict[str, str]]:
     return events[-8:]
 
 
-ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-MEMORY_PATTERNS = (
-    ("modelMiB", re.compile(r"(?:loading model weights|model loading|model weights|model memory|weights).*?(\d+(?:\.\d+)?)\s*(GiB|GB|MiB|MB)", re.IGNORECASE)),
-    ("contextMiB", re.compile(r"(?:kv cache|context|cache).*?(\d+(?:\.\d+)?)\s*(GiB|GB|MiB|MB)", re.IGNORECASE)),
-)
-
-
-def strip_ansi(text: str) -> str:
-    return ANSI_RE.sub("", text).replace("\x1b", "")
-
-
-def parse_memory_breakdown(logs: str) -> dict[str, Any]:
-    breakdown: dict[str, Any] = {"modelMiB": None, "contextMiB": None}
-    clean = strip_ansi(logs)
-    for key, pattern in MEMORY_PATTERNS:
-        match = pattern.search(clean)
-        if match:
-            amount = float(match.group(1))
-            unit = match.group(2).lower()
-            breakdown[key] = round(amount * 1024 if unit.startswith("g") else amount, 1)
-    return breakdown
-
-def merge_memory_breakdown(stored: Any, parsed: dict[str, Any]) -> dict[str, Any]:
-    stored_values = stored if isinstance(stored, dict) else {}
-    merged = {"modelMiB": stored_values.get("modelMiB"), "contextMiB": stored_values.get("contextMiB")}
-    for key in merged:
-        if parsed.get(key) is not None:
-            merged[key] = parsed[key]
-    return merged
-
-
-def _has_new_memory_values(current: Any, previous: Any) -> bool:
-    if not isinstance(current, dict):
-        return False
-    previous_values = previous if isinstance(previous, dict) else {}
-    for key, value in current.items():
-        if value is not None and previous_values.get(key) != value:
-            return True
-    return False
 def _assign_gpu_memory(runtimes: list[dict[str, Any]], gpu: dict[str, Any]) -> None:
     active = [item for item in runtimes if item.get("status") in {"Starting", "Running", "Ready"}]
     for runtime in active:
@@ -451,12 +426,15 @@ def _assign_gpu_memory(runtimes: list[dict[str, Any]], gpu: dict[str, Any]) -> N
     active[0]["gpuMemorySource"] = "observed process memory"
 
 
+
 def _gpu_memory_target_percent(runtime: dict[str, Any]) -> float | None:
     value = _command_arg(runtime.get("command"), "--gpu-mem")
     if value is None:
         value = _command_arg(runtime.get("command"), "--gpu-memory-utilization")
     if value is None:
         value = runtime.get("gpuMemoryUtilization")
+    if value is None:
+        return None
     try:
         number = float(value)
     except (TypeError, ValueError):

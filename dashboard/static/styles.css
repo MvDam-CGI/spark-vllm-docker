@@ -342,14 +342,20 @@ h2 {
 .recipe-grid,
 .capability-grid,
 .launch-layout,
-.details-grid {
+.details-grid,
+.monitoring-summary {
   display: grid;
   gap: 1rem;
 }
 
 .recipe-grid,
-.capability-grid {
+.capability-grid,
+.monitoring-summary {
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+}
+
+.monitoring-summary {
+  margin-bottom: 1rem;
 }
 
 .launch-layout,
@@ -428,6 +434,36 @@ h2 {
   margin: 0;
 }
 
+.runtime-token-summary {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.runtime-token-panel {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  grid-column: 1 / -1;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(7, 10, 13, 0.34);
+  padding: 0.75rem;
+}
+
+.metric-tile {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.metric-tile strong {
+  font-size: 1.25rem;
+  line-height: 1.15;
+}
+
+.metric-tile p {
+  margin: 0;
+}
+
 .runtime-memory {
   display: grid;
   gap: 0.45rem;
@@ -489,6 +525,10 @@ h2 {
 
 .runtime-card-compact .runtime-gpu-summary p {
   font-size: 0.9rem;
+}
+
+.runtime-card-compact .runtime-token-summary {
+  font-size: 0.92rem;
 }
 
 .runtime-card-compact details {
