@@ -1,5 +1,17 @@
-const CACHE_NAME = "spark-dashboard-v3";
-const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/cgi-logo.png", "/offline.html", "/manifest.webmanifest"];
+const CACHE_NAME = "spark-dashboard-v4";
+const SHELL = [
+  "/",
+  "/index.html",
+  "/styles.css",
+  "/js/app.js",
+  "/js/api.js",
+  "/js/core.js",
+  "/js/format.js",
+  "/js/views.js",
+  "/cgi-logo.png",
+  "/offline.html",
+  "/manifest.webmanifest",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL)));

@@ -1,73 +1,36 @@
-const state = {
-  recipes: [],
-  runtimes: [],
-  gpu: null,
-  system: null,
-  settings: null,
-  failures: new Map(),
-  openDetails: new Set(),
-  launchLogTimer: null,
-};
+import { apiGet, apiPost } from "./api.js";
+import {
+  byId,
+  detailsElement,
+  el,
+  emptyState,
+  labelize,
+  meta,
+  option,
+  replaceChildren,
+  setText,
+  state,
+  textNode,
+} from "./core.js";
+import {
+  formatCount,
+  formatMiB,
+  formatStartedAt,
+  memoryValue,
+  millisecondsValue,
+  percentValue,
+  secondsValue,
+  tokenMetricValue,
+  tokensPerSecondValue,
+} from "./format.js";
 
-const pages = ["overview", "recipes", "runtime", "launch", "logs", "settings"];
-const tokenKey = "spark-dashboard-token";
-const refreshMs = 5000;
+let refreshAllHook = async () => {};
 
-const requests = [
-  ["recipes", "/api/recipes"],
-  ["runtimes", "/api/runtimes"],
-  ["gpu", "/api/gpu"],
-  ["system", "/api/system"],
-  ["settings", "/api/settings"],
-];
-
-document.addEventListener("DOMContentLoaded", () => {
-  bindNavigation();
-  bindForms();
-  renderAll();
-  registerServiceWorker();
-  refreshAll();
-  setInterval(refreshAll, refreshMs);
-});
-
-function bindNavigation() {
-  window.addEventListener("hashchange", showRoute);
-  showRoute();
+export function setRefreshAllHook(callback) {
+  refreshAllHook = callback;
 }
 
-function showRoute() {
-  const page = pages.includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview";
-  document.querySelectorAll("[data-page]").forEach((section) => {
-    section.classList.toggle("is-active", section.dataset.page === page);
-  });
-  document.querySelectorAll("[data-page-link]").forEach((link) => {
-    link.toggleAttribute("aria-current", link.dataset.pageLink === page);
-  });
-  document.title = page === "runtime" ? "Monitoring" : page[0].toUpperCase() + page.slice(1);
-}
-
-function bindForms() {
-  document.addEventListener("toggle", rememberDetailsState, true);
-  document.querySelectorAll("input[name='recipe-filter']").forEach((input) => {
-    input.addEventListener("change", renderRecipes);
-  });
-  byId("launch-recipe").addEventListener("change", applyRecipeDefaults);
-  byId("launch-form").addEventListener("input", updateCommandPreview);
-  byId("launch-form").addEventListener("submit", launchRuntime);
-  document.querySelectorAll("[data-launch-tab]").forEach((button) => {
-    button.addEventListener("click", () => showLaunchTab(button.dataset.launchTab));
-  });
-  byId("token-form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    sessionStorage.setItem(tokenKey, byId("control-token").value);
-    setText("token-status", "Control token saved for this tab.");
-  });
-  byId("refresh-logs").addEventListener("click", refreshLogs);
-  byId("copy-logs").addEventListener("click", () => navigator.clipboard.writeText(byId("raw-logs").textContent));
-  byId("logs-runtime").addEventListener("change", refreshLogs);
-}
-
-function showLaunchTab(tab) {
+export function showLaunchTab(tab) {
   document.querySelectorAll("[data-launch-tab]").forEach((button) => {
     button.setAttribute("aria-selected", String(button.dataset.launchTab === tab));
   });
@@ -76,50 +39,7 @@ function showLaunchTab(tab) {
   });
 }
 
-function rememberDetailsState(event) {
-  const details = event.target;
-  if (!(details instanceof HTMLDetailsElement) || !details.dataset.detailKey) return;
-  if (details.open) state.openDetails.add(details.dataset.detailKey);
-  else state.openDetails.delete(details.dataset.detailKey);
-}
-
-async function refreshAll() {
-  const settled = await Promise.allSettled(requests.map(([, path]) => apiGet(path)));
-  state.failures.clear();
-  settled.forEach((result, index) => {
-    const [key] = requests[index];
-    if (result.status === "fulfilled") {
-      applyResult(key, result.value);
-    } else {
-      state.failures.set(key, result.reason.message || "Unavailable");
-    }
-  });
-  renderAll();
-}
-
-function applyResult(key, value) {
-  if (key === "recipes") state.recipes = value.recipes || [];
-  if (key === "runtimes") state.runtimes = value.runtimes || [];
-  if (key === "gpu") state.gpu = value;
-  if (key === "system") state.system = value;
-  if (key === "settings") state.settings = value;
-}
-
-function renderAll() {
-  const failing = state.failures.size;
-  setText("connection-state", failing ? `Partial telemetry: ${failing} check${failing === 1 ? "" : "s"} unavailable` : "Live");
-  document.querySelectorAll("[data-control-action]").forEach((button) => {
-    button.disabled = failing === requests.length;
-  });
-  renderOverview();
-  renderRecipes();
-  renderRuntime();
-  renderLaunchOptions();
-  renderLogsOptions();
-  renderSettings();
-}
-
-function renderOverview() {
+export function renderOverview() {
   const active = activeRuntimes();
   setText("running-title", state.system?.host ? `Models on ${state.system.host}` : "Models on this Spark");
   setText("running-count-badge", active.length ? `${active.length} active` : "Nothing running");
@@ -138,7 +58,11 @@ function renderOverviewRuntimes() {
 }
 
 function activeRuntimes() {
-  return state.runtimes.filter((runtime) => ["Starting", "Running", "Ready"].includes(runtime.status));
+  return state.runtimes.filter(isActiveRuntime);
+}
+
+function isActiveRuntime(runtime) {
+  return ["Starting", "Running", "Ready"].includes(runtime.status);
 }
 
 function renderCapacityPanel() {
@@ -208,9 +132,9 @@ function infoCard(label, value, detail) {
   return card;
 }
 
-function renderRecipes() {
+export function renderRecipes() {
   const filter = document.querySelector("input[name='recipe-filter']:checked")?.value || "all";
-  const runningSlugs = new Set(state.runtimes.filter((runtime) => ["Starting", "Running", "Ready"].includes(runtime.status)).map((runtime) => runtime.recipeSlug));
+  const runningSlugs = new Set(state.runtimes.filter((runtime) => isActiveRuntime(runtime)).map((runtime) => runtime.recipeSlug));
   const recipes = state.recipes.filter((recipe) => {
     if (filter === "solo") return !recipe.clusterOnly;
     if (filter === "cluster") return !recipe.soloOnly;
@@ -256,7 +180,7 @@ function recipeCard(recipe) {
 }
 
 function runningRecipeLabel(slug) {
-  const isRunning = state.runtimes.some((runtime) => ["Starting", "Running", "Ready"].includes(runtime.status) && runtime.recipeSlug === slug);
+  const isRunning = state.runtimes.some((runtime) => isActiveRuntime(runtime) && runtime.recipeSlug === slug);
   return isRunning
     ? { status: "running", label: "Already running" }
     : { status: "not-running", label: "Not running" };
@@ -268,22 +192,75 @@ function availabilityBadge(availability) {
   return el("span", `availability-badge availability-${status}`, label);
 }
 
-function renderRuntime() {
+export function renderRuntime() {
   renderMonitoringSummary();
-  const nodes = state.runtimes.length ? state.runtimes.map((runtime) => runtimeCard(runtime)) : [emptyState("No runtime selected", "Dashboard-launched runtimes will appear here with health, port, and log actions.")];
+  const active = activeRuntimes();
+  const history = state.runtimes.filter((runtime) => !isActiveRuntime(runtime));
+  const nodes = [runtimeSection("Running now", active)];
+  if (history.length) nodes.push(runtimeHistorySection(history));
   replaceChildren(byId("runtime-list"), nodes);
 }
 
 function renderMonitoringSummary() {
+  const activeWithMetrics = activeRuntimes().filter((runtime) => runtime.tokenMetrics);
   const withMetrics = state.runtimes.filter((runtime) => runtime.tokenMetrics);
-  const generatedToday = sumGeneratedTokens(withMetrics.filter((runtime) => isToday(runtime.startedAt)));
+  const activeGenerated = sumGeneratedTokens(activeWithMetrics);
+  const activeRequests = sumRequestCount(activeWithMetrics);
   const generatedTotal = sumGeneratedTokens(withMetrics);
-  const peakOutput = Math.max(0, ...withMetrics.map((runtime) => runtime.tokenMetrics?.peakGeneratedTokensPerSecond).filter((value) => typeof value === "number"));
+  const peakOutput = Math.max(0, ...activeWithMetrics.map((runtime) => runtime.tokenMetrics?.peakGeneratedTokensPerSecond).filter((value) => typeof value === "number"));
   replaceChildren(byId("monitoring-summary"), [
-    metricTile("Generated today", tokenMetricValue(generatedToday), "dashboard runtime history"),
-    metricTile("Generated total", tokenMetricValue(generatedTotal), "stored runtime totals"),
-    metricTile("Peak output", peakOutput ? `${peakOutput.toFixed(1)} tok/s` : "Not available", "observed aggregate rate"),
+    metricTile("Active generated", tokenMetricValue(activeGenerated), "current vLLM counters"),
+    metricTile("Active requests", tokenMetricValue(activeRequests), "completed by active runtimes"),
+    metricTile("Peak output", peakOutput ? `${peakOutput.toFixed(1)} tok/s` : "Not available", "highest active sample"),
+    metricTile("Stored generated", tokenMetricValue(generatedTotal), "last known dashboard totals"),
   ]);
+}
+
+function runtimeSection(title, runtimes) {
+  const section = el("section", "runtime-section");
+  section.append(el("h2", "", title));
+  if (!runtimes.length) {
+    section.append(emptyState("No active runtimes", "Start a model when you want live health, token, and latency monitoring here.", "Launch a model", "#launch"));
+    return section;
+  }
+  const grid = el("div", "runtime-card-grid");
+  runtimes.forEach((runtime) => grid.append(runtimeCard(runtime)));
+  section.append(grid);
+  return section;
+}
+
+function runtimeHistorySection(runtimes) {
+  const details = document.createElement("details");
+  details.className = "runtime-history-section";
+  details.dataset.detailKey = "runtime-history";
+  details.open = state.openDetails.has("runtime-history");
+  details.append(el("summary", "", `History (${runtimes.length})`));
+  const grid = el("div", "runtime-history-grid");
+  runtimes.slice().reverse().forEach((runtime) => grid.append(runtimeHistoryCard(runtime)));
+  details.append(grid);
+  return details;
+}
+
+function runtimeHistoryCard(runtime) {
+  const card = el("article", "runtime-history-card");
+  const actions = el("div", "card-actions");
+  const logs = el("button", "secondary-button", "Logs");
+  logs.type = "button";
+  logs.addEventListener("click", () => {
+    location.hash = "logs";
+    byId("logs-runtime").value = runtime.id;
+    refreshLogs();
+  });
+  actions.append(logs);
+  card.append(
+    statusPill(runtime.status),
+    el("h3", "", runtimeDisplayName(runtime)),
+    meta("Started", formatStartedAt(runtime.startedAt)),
+    meta("Port", runtime.port),
+    runtimeTokenSummary(runtime),
+    actions,
+  );
+  return card;
 }
 
 function runtimeCard(runtime, options = {}) {
@@ -331,7 +308,7 @@ function runtimeCard(runtime, options = {}) {
   return card;
 }
 
-function renderLaunchOptions() {
+export function renderLaunchOptions() {
   const select = byId("launch-recipe");
   const selected = select.value || "translategemma-4b-it";
   replaceChildren(select, state.recipes.map((recipe) => option(recipe.slug, recipe.name)));
@@ -341,7 +318,7 @@ function renderLaunchOptions() {
   updateCommandPreview();
 }
 
-function applyRecipeDefaults() {
+export function applyRecipeDefaults() {
   const recipe = selectedRecipe();
   if (!recipe) return;
   byId("launch-port").value = recipe.slug === "translategemma-4b-it" ? 8001 : recipe.defaultPort;
@@ -354,7 +331,7 @@ function applyRecipeDefaults() {
   updateCommandPreview();
 }
 
-function updateCommandPreview() {
+export function updateCommandPreview() {
   const payload = launchPayload();
   if (!payload.recipeSlug) {
     setText("command-preview", "Waiting for recipes...");
@@ -396,7 +373,7 @@ function updateCommandPreview() {
   setText("command-preview", args.join(" "));
 }
 
-async function launchRuntime(event) {
+export async function launchRuntime(event) {
   event.preventDefault();
   setText("launch-status", "Submitting launch request...");
   setText("launch-output", "");
@@ -410,7 +387,7 @@ async function launchRuntime(event) {
       setText("launch-status", `Starting ${result.launchId}. Watching startup logs...`);
       watchLaunchLogs(result.launchId);
     }
-    await refreshAll();
+    await refreshAllHook();
   } catch (error) {
     setText("launch-status", "Launch request failed.");
     setText("launch-output", error.message);
@@ -450,14 +427,14 @@ async function stopRuntime(runtimeId) {
   try {
     const result = await apiPost(`/api/runtimes/${runtimeId}/stop`, {});
     if (!result.stopped) throw new Error("Stop could not terminate this runtime. Check that it is still a vLLM process and that the dashboard has permission to stop it.");
-    await refreshAll();
+    await refreshAllHook();
   } catch (error) {
     setText("connection-state", error.message);
     if (error.message.includes("control token")) location.hash = "settings";
   }
 }
 
-function renderLogsOptions() {
+export function renderLogsOptions() {
   const select = byId("logs-runtime");
   const selected = select.value;
   replaceChildren(select, state.runtimes.map((runtime) => option(runtime.id, runtimeDisplayName(runtime))));
@@ -472,7 +449,7 @@ function renderLogsOptions() {
 function renderLogRuntimeGroups() {
   const selected = byId("logs-runtime").value;
   const active = activeRuntimes();
-  const history = state.runtimes.filter((runtime) => !["Starting", "Running", "Ready"].includes(runtime.status));
+  const history = state.runtimes.filter((runtime) => !isActiveRuntime(runtime));
   const groups = [
     logRuntimeSection("Running now", active, selected),
     logRuntimeSection("History", history, selected),
@@ -511,7 +488,7 @@ function logRuntimeButton(runtime, selected) {
   return button;
 }
 
-async function refreshLogs() {
+export async function refreshLogs() {
   const runtimeId = byId("logs-runtime").value;
   if (!runtimeId) return;
   const runtime = state.runtimes.find((item) => item.id === runtimeId);
@@ -523,7 +500,7 @@ async function refreshLogs() {
   replaceChildren(byId("critical-log-events"), (result.events || []).map((event) => el("p", "event-item", `${event.status}: ${event.message}`)));
 }
 
-function renderSettings() {
+export function renderSettings() {
   const settings = state.settings || {};
   const entries = Object.entries(settings);
   const list = byId("settings-list");
@@ -579,37 +556,6 @@ function optionalNumber(value) {
   return value === null || value === "" ? null : Number(value);
 }
 
-async function apiGet(path) {
-  const response = await fetch(path, { headers: { Accept: "application/json" } });
-  return readJson(response);
-}
-
-async function apiPost(path, payload) {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "X-Dashboard-Token": currentControlToken(),
-    },
-    body: JSON.stringify(payload),
-  });
-  return readJson(response);
-}
-
-function currentControlToken() {
-  return byId("control-token").value || sessionStorage.getItem(tokenKey) || "";
-}
-
-async function readJson(response) {
-  const data = await response.json();
-  if (!response.ok) {
-    if (response.status === 401) throw new Error("Set the dashboard control token in Settings, then try again.");
-    throw new Error(data.error || "Request failed.");
-  }
-  return data;
-}
-
 function selectedRecipe() {
   return state.recipes.find((recipe) => recipe.slug === byId("launch-recipe").value);
 }
@@ -631,13 +577,6 @@ function runtimeDisplayName(runtime) {
 function shortRuntimeId(runtimeId) {
   const text = String(runtimeId || "");
   return text.length > 20 ? text.slice(-20) : text;
-}
-
-function formatStartedAt(startedAt) {
-  if (!startedAt) return "manual process";
-  const date = new Date(startedAt);
-  if (Number.isNaN(date.getTime())) return "time unknown";
-  return date.toLocaleString([], { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 function runtimeGpuSummary(runtime) {
@@ -686,7 +625,7 @@ function runtimeTokenSummary(runtime) {
   }
   const parts = [];
   if (typeof generated === "number") parts.push(`${formatCount(generated)} generated tokens`);
-  if (typeof lastActiveRate === "number") parts.push(`${lastActiveRate} agg tok/s`);
+  if (typeof lastActiveRate === "number") parts.push(`${lastActiveRate} output tok/s`);
   summary.textContent = parts.join(" · ");
   return summary;
 }
@@ -698,9 +637,9 @@ function runtimeTokenPanel(runtime) {
     metricTile("Generated", tokenMetricValue(metrics.generationTokensTotal), tokenSourceLabel(metrics.source)),
     metricTile("Prompt", tokenMetricValue(metrics.promptTokensTotal), "input tokens"),
     metricTile("Total", tokenMetricValue(metrics.tokensTotal), "prompt plus generated"),
-    metricTile("Requests", tokenMetricValue(metrics.requestCount), "completed by vLLM"),
-    metricTile("Current output", tokensPerSecondValue(metrics.currentGeneratedTokensPerSecond), "latest dashboard sample"),
-    metricTile("Last active output", tokensPerSecondValue(metrics.lastActiveGeneratedTokensPerSecond), "latest positive sample"),
+    metricTile("Requests", tokenMetricValue(metrics.requestCount), "successful vLLM requests"),
+    metricTile("Current output", tokensPerSecondValue(metrics.currentGeneratedTokensPerSecond), "generated tokens per second"),
+    metricTile("Last active output", tokensPerSecondValue(metrics.lastActiveGeneratedTokensPerSecond), "most recent nonzero rate"),
     metricTile("Peak output", tokensPerSecondValue(metrics.peakGeneratedTokensPerSecond), "highest observed sample"),
     metricTile("TPOT", millisecondsValue(metrics.timePerOutputTokenMs), "avg time per output token"),
     metricTile("E2E latency", secondsValue(metrics.endToEndLatencySeconds), "avg per request"),
@@ -716,26 +655,6 @@ function metricTile(label, value, detail) {
   return tile;
 }
 
-function tokenMetricValue(value) {
-  return typeof value === "number" ? formatCount(value) : "Not available";
-}
-
-function tokensPerSecondValue(value) {
-  return typeof value === "number" ? `${value} tok/s` : "Not available";
-}
-
-function millisecondsValue(value) {
-  return typeof value === "number" ? `${value} ms` : "Not available";
-}
-
-function secondsValue(value) {
-  return typeof value === "number" ? `${value} s` : "Not available";
-}
-
-function percentValue(value) {
-  return typeof value === "number" ? `${value}%` : "Not available";
-}
-
 function sumGeneratedTokens(runtimes) {
   return runtimes.reduce((total, runtime) => {
     const value = runtime.tokenMetrics?.generationTokensTotal;
@@ -743,22 +662,16 @@ function sumGeneratedTokens(runtimes) {
   }, 0);
 }
 
-function isToday(value) {
-  if (!value) return false;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return false;
-  const now = new Date();
-  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+function sumRequestCount(runtimes) {
+  return runtimes.reduce((total, runtime) => {
+    const value = runtime.tokenMetrics?.requestCount;
+    return total + (typeof value === "number" ? value : 0);
+  }, 0);
 }
 
 function tokenSourceLabel(source) {
-  if (source === "prometheus") return "exact vLLM counter";
+  if (source === "prometheus") return "current vLLM counter";
   return "waiting for metrics";
-}
-
-function formatCount(value) {
-  if (typeof value !== "number") return "Not available";
-  return Math.round(value).toLocaleString();
 }
 
 function observedGpuValue(runtime) {
@@ -771,16 +684,6 @@ function memoryLine(label, value, mib) {
   row.append(el("span", "", label), el("strong", "", value));
   if (typeof mib === "number") row.title = formatMiB(mib);
   return row;
-}
-
-function memoryValue(mib) {
-  return typeof mib === "number" ? formatMiB(mib) : "Not reported";
-}
-
-function formatMiB(mib) {
-  if (typeof mib !== "number") return "Unknown";
-  if (mib >= 1024) return `${(mib / 1024).toFixed(1)} GiB`;
-  return `${Math.round(mib).toLocaleString()} MiB`;
 }
 
 function telemetryLabel(key) {
@@ -804,67 +707,3 @@ function gpuMemoryDetail(gpu) {
 function gpuUnavailableText() {
   return state.failures.has("gpu") ? "nvidia-smi is unavailable" : "Waiting for nvidia-smi";
 }
-
-function detailsElement(key, summaryText) {
-  const details = document.createElement("details");
-  details.dataset.detailKey = key;
-  details.open = state.openDetails.has(key);
-  details.append(el("summary", "", summaryText));
-  return details;
-}
-
-function emptyState(title, detail, actionLabel = "", href = "") {
-  const node = el("div", "empty-state");
-  node.append(el("strong", "", title), el("p", "muted", detail));
-  if (actionLabel && href) {
-    const action = el("a", "secondary-link", actionLabel);
-    action.href = href;
-    node.append(action);
-  }
-  return node;
-}
-
-function meta(label, value) {
-  const p = el("p", "recipe-meta");
-  p.append(el("strong", "", `${label}: `), textNode(String(value)));
-  return p;
-}
-
-function option(value, label) {
-  const node = document.createElement("option");
-  node.value = value;
-  node.textContent = label;
-  return node;
-}
-
-function labelize(key) {
-  return key.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase());
-}
-
-function registerServiceWorker() {
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
-}
-
-function byId(id) {
-  return document.getElementById(id);
-}
-
-function setText(id, text) {
-  byId(id).textContent = text;
-}
-
-function el(tag, className = "", text = "") {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text) node.textContent = text;
-  return node;
-}
-
-function textNode(text) {
-  return document.createTextNode(text);
-}
-
-function replaceChildren(parent, children) {
-  parent.replaceChildren(...children);
-}
-

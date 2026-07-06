@@ -339,6 +339,8 @@ h2 {
 
 .runtime-stack,
 .runtime-list,
+.runtime-card-grid,
+.runtime-history-grid,
 .recipe-grid,
 .capability-grid,
 .launch-layout,
@@ -364,10 +366,51 @@ h2 {
 }
 
 .runtime-card,
+.runtime-history-card,
 .recipe-card,
 .info-card,
 .empty-state {
   padding: 1rem;
+}
+
+.runtime-section,
+.runtime-history-section {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.runtime-section > h2 {
+  color: var(--muted);
+  font-size: 0.95rem;
+  text-transform: uppercase;
+}
+
+.runtime-history-section {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 1rem;
+}
+
+.runtime-history-section > summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 850;
+}
+
+.runtime-history-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  margin-top: 0.75rem;
+}
+
+.runtime-history-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(16, 22, 27, 0.72);
+}
+
+.runtime-history-card h3 {
+  margin: 0 0 0.45rem;
+  font-size: 1rem;
 }
 
 .runtime-card h2,
