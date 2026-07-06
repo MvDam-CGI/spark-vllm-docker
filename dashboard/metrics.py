@@ -63,6 +63,8 @@ def unavailable_token_metrics() -> dict[str, Any]:
         "generationTokensTotal": None,
         "tokensTotal": None,
         "requestCount": None,
+        "runningRequestCount": None,
+        "waitingRequestCount": None,
         "sampledAt": None,
         "currentGeneratedTokensPerSecond": None,
         "lastActiveGeneratedTokensPerSecond": None,
@@ -96,6 +98,8 @@ def parse_prometheus_token_metrics(text: str) -> dict[str, Any] | None:
     prompt_total = 0.0
     generation_total = 0.0
     request_count = 0.0
+    running_request_count = None
+    waiting_request_count = None
     time_per_output_token_seconds = 0.0
     time_per_output_token_count = 0.0
     inter_token_latency_seconds = 0.0
@@ -126,6 +130,10 @@ def parse_prometheus_token_metrics(text: str) -> dict[str, Any] | None:
             found = True
         elif name.endswith("request_success_total"):
             request_count += value
+        elif name.endswith("num_requests_running"):
+            running_request_count = max(running_request_count or 0.0, value)
+        elif name.endswith("num_requests_waiting"):
+            waiting_request_count = max(waiting_request_count or 0.0, value)
         elif name.endswith("request_time_per_output_token_seconds_sum"):
             time_per_output_token_seconds += value
         elif name.endswith("request_time_per_output_token_seconds_count"):
@@ -154,6 +162,8 @@ def parse_prometheus_token_metrics(text: str) -> dict[str, Any] | None:
         "generationTokensTotal": generation,
         "tokensTotal": prompt + generation,
         "requestCount": int(request_count) if request_count else None,
+        "runningRequestCount": int(running_request_count) if running_request_count is not None else None,
+        "waitingRequestCount": int(waiting_request_count) if waiting_request_count is not None else None,
         "timePerOutputTokenMs": _average_seconds_to_ms(time_per_output_token_seconds, time_per_output_token_count),
         "interTokenLatencyMs": _average_seconds_to_ms(inter_token_latency_seconds, inter_token_latency_count),
         "endToEndLatencySeconds": _average_seconds(e2e_latency_seconds, e2e_latency_count),

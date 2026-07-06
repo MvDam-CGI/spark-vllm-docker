@@ -480,6 +480,8 @@ vllm:generation_tokens_total{model_name="one"} 300
 vllm:generation_tokens_total{model_name="two"} 75
 vllm:request_success_total{finished_reason="stop",model_name="one"} 3
 vllm:request_success_total{finished_reason="stop",model_name="two"} 2
+vllm:num_requests_running{model_name="one"} 2
+vllm:num_requests_waiting{model_name="one"} 1
 vllm:request_time_per_output_token_seconds_sum{model_name="one"} 1.5
 vllm:request_time_per_output_token_seconds_sum{model_name="two"} 0.5
 vllm:request_time_per_output_token_seconds_count{model_name="one"} 3
@@ -499,6 +501,8 @@ vllm:prefix_cache_hits_total{model_name="one"} 60
         "generationTokensTotal": 375,
         "tokensTotal": 500,
         "requestCount": 5,
+        "runningRequestCount": 2,
+        "waitingRequestCount": 1,
         "timePerOutputTokenMs": 400.0,
         "interTokenLatencyMs": None,
         "endToEndLatencySeconds": 4.0,

@@ -205,12 +205,14 @@ function renderMonitoringSummary() {
   const activeWithMetrics = activeRuntimes().filter((runtime) => runtime.tokenMetrics);
   const withMetrics = state.runtimes.filter((runtime) => runtime.tokenMetrics);
   const activeGenerated = sumGeneratedTokens(activeWithMetrics);
-  const activeRequests = sumRequestCount(activeWithMetrics);
+  const runningRequests = sumMetric(activeWithMetrics, "runningRequestCount");
+  const completedRequests = sumMetric(activeWithMetrics, "requestCount");
   const generatedTotal = sumGeneratedTokens(withMetrics);
   const peakOutput = Math.max(0, ...activeWithMetrics.map((runtime) => runtime.tokenMetrics?.peakGeneratedTokensPerSecond).filter((value) => typeof value === "number"));
   replaceChildren(byId("monitoring-summary"), [
     metricTile("Active generated", tokenMetricValue(activeGenerated), "current vLLM counters"),
-    metricTile("Active requests", tokenMetricValue(activeRequests), "completed by active runtimes"),
+    metricTile("Running requests", tokenMetricValue(runningRequests), "currently being served"),
+    metricTile("Completed requests", tokenMetricValue(completedRequests), "successful active-runtime total"),
     metricTile("Peak output", peakOutput ? `${peakOutput.toFixed(1)} tok/s` : "Not available", "highest active sample"),
     metricTile("Stored generated", tokenMetricValue(generatedTotal), "last known dashboard totals"),
   ]);
@@ -637,7 +639,9 @@ function runtimeTokenPanel(runtime) {
     metricTile("Generated", tokenMetricValue(metrics.generationTokensTotal), tokenSourceLabel(metrics.source)),
     metricTile("Prompt", tokenMetricValue(metrics.promptTokensTotal), "input tokens"),
     metricTile("Total", tokenMetricValue(metrics.tokensTotal), "prompt plus generated"),
-    metricTile("Requests", tokenMetricValue(metrics.requestCount), "successful vLLM requests"),
+    metricTile("Running requests", tokenMetricValue(metrics.runningRequestCount), "currently being served"),
+    metricTile("Waiting requests", tokenMetricValue(metrics.waitingRequestCount), "queued by scheduler"),
+    metricTile("Completed requests", tokenMetricValue(metrics.requestCount), "successful vLLM requests"),
     metricTile("Current output", tokensPerSecondValue(metrics.currentGeneratedTokensPerSecond), "generated tokens per second"),
     metricTile("Last active output", tokensPerSecondValue(metrics.lastActiveGeneratedTokensPerSecond), "most recent nonzero rate"),
     metricTile("Peak output", tokensPerSecondValue(metrics.peakGeneratedTokensPerSecond), "highest observed sample"),
@@ -662,9 +666,9 @@ function sumGeneratedTokens(runtimes) {
   }, 0);
 }
 
-function sumRequestCount(runtimes) {
+function sumMetric(runtimes, key) {
   return runtimes.reduce((total, runtime) => {
-    const value = runtime.tokenMetrics?.requestCount;
+    const value = runtime.tokenMetrics?.[key];
     return total + (typeof value === "number" ? value : 0);
   }, 0);
 }
